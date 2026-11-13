@@ -15,6 +15,28 @@ npm run build    # production build in dist/
 Node 18+ required. On Windows, if `npm` is blocked by an execution policy, run
 commands through `cmd /c "npm ..."`.
 
+## Deploying to Surge
+
+The app is static, so any static host works. With Surge:
+
+```bash
+npm run build                 # writes dist/
+npx surge dist myboardgame.surge.sh
+```
+
+The first run asks for an email and password and creates the Surge account. If you
+omit the domain, Surge generates one; you can also point a custom domain at it.
+HTTPS is automatic.
+
+`dist/` is gitignored, so always build before publishing. If you later add
+client-side routing, copy `dist/index.html` to `dist/200.html` so deep links resolve;
+the current version has no routes, so that isn't needed yet.
+
+Watch out for one thing when sharing the link: the checklist, army setups and notes
+live in `localStorage`, which is per browser and per device. Two players opening the
+same URL get independent state — that's fine for a table-side tool, but it is not
+shared game state.
+
 ## What's in it
 
 **Codex** — every unit and structure with cost, HP, damage, range, threatening
