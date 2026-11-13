@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyDamage,
   damageProfile,
+  iterateBattle,
   resolveBattle,
   smartTargetPolicy,
   type TargetPolicy,
@@ -171,5 +172,68 @@ describe("resolveBattle", () => {
 
     expect(a.map((card) => card.hp)).toEqual([3, 2]);
     expect(smartTargetPolicy).toBeTypeOf("function");
+  });
+});
+
+describe("between-round retreats", () => {
+  it("prompts for retreats after outnumber damage, before the first band", () => {
+    const steps = iterateBattle(
+      setup(
+        createArmy(["walker", "walker", "artillery", "artillery"]),
+        createArmy([
+          "worker",
+          "worker",
+          "worker",
+          "soldier",
+          "soldier",
+          "soldier",
+          "walker",
+          "walker",
+        ]),
+      ),
+    );
+
+    const first = steps.next();
+    if (first.done) throw new Error("expected a retreat prompt");
+
+    expect(first.value.round).toBe(1);
+    expect(first.value.outnumber?.total).toBe(2);
+    expect(first.value.rounds).toHaveLength(0);
+    // The outnumber hit destroyed one of A's walkers before the prompt.
+    expect(first.value.units.a).toHaveLength(3);
+    expect(first.value.units.b).toHaveLength(8);
+  });
+
+  it("lets a unit retreat at the start of a later round", () => {
+    const steps = iterateBattle(
+      setup(
+        createArmy(["soldier", "soldier", "soldier", "soldier"]),
+        createArmy(["soldier", "soldier", "soldier"]),
+      ),
+    );
+
+    const first = steps.next();
+    if (first.done) throw new Error("expected a round 1 prompt");
+    expect(first.value.round).toBe(1);
+
+    const second = steps.next({ a: [], b: [] });
+    if (second.done) throw new Error("expected a round 2 prompt");
+    expect(second.value.round).toBe(2);
+    expect(second.value.rounds).toHaveLength(1);
+    expect(second.value.units.a).toHaveLength(2);
+
+    const withdrawing = second.value.units.a[1];
+    if (!withdrawing) throw new Error("missing unit");
+
+    const final = steps.next({ a: [withdrawing.uid], b: [] });
+    if (!final.done) throw new Error("expected the battle to finish");
+
+    const roundTwo = final.value.rounds.find((round) => round.index === 2);
+    const melee = roundTwo?.bands.find((band) => band.band === "melee");
+    expect(melee?.damage[0]?.total).toBe(2);
+    expect(melee?.retreats).toContainEqual({
+      team: "a",
+      uids: [withdrawing.uid],
+    });
   });
 });

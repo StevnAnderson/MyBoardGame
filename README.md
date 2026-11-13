@@ -1,4 +1,4 @@
-# MyBoardGame — Companion
+# Sector:Gridfall — Companion
 
 A web companion for the hex-and-army board game described in `BoardGame.docx`.
 It is a **design and playtest tool**, not a full digital tabletop: it holds the
@@ -45,9 +45,11 @@ status, supply limit, what it produces and what it unlocks, plus the build tree.
 **Battle Lab** — builds two armies and resolves the fight through the full damage
 loop. It enforces outnumber damage, simultaneous range bands, front-to-back
 targeting (threatening cards must take damage, non-threatening cards can be
-skipped), excess-damage carry-over, retreats, and the unopposed loop against an
-army reduced to structures. Every application is logged so you can see exactly
-why an army lost. Adding a card is blocked at its supply limit.
+skipped), excess-damage carry-over, and the unopposed loop against an army
+reduced to structures. At the start of every round you choose which units
+retreat, including the first round right after outnumber damage. Every
+application is logged so you can see exactly why an army lost. Adding a card is
+blocked at its supply limit.
 
 **Turn Flow** — the phase checklist in the order the rules require, plus an
 income calculator and a notes pad. Progress and notes are kept in
@@ -59,7 +61,7 @@ income calculator and a notes pad. Progress and notes are kept in
 src/game/types.ts       cards, costs, range bands
 src/game/codex.ts       stat blocks transcribed from BoardGame.docx
 src/game/battle.ts      the rules engine (framework-free, unit tested)
-src/game/battle.test.ts damage loop, targeting, outnumber and retreat rules
+src/game/battle.test.ts damage loop, targeting, outnumber and per-round retreats
 src/game/codex.test.ts    stat blocks and printed card counts
 src/components/         Codex, Battle Lab, Turn Flow views
 docs/OPEN_QUESTIONS.md  decisions made, assumptions still worth confirming
@@ -77,7 +79,9 @@ Settled with the designer:
 - **Supply** — the printed card counts are hard per-player limits (12 workers, 12
   soldiers, 12 walkers, 9 artillery, 6 Bases, 8 Barracks, 6 Factories, 5 Refineries).
 - **Builds** — every card takes one turn.
-- **Retreats** — retreating units deal no damage and can be skipped as targets.
+- **Retreats** — retreating units deal no damage, can be skipped as targets, and
+  leave after any band that deals damage. You can change the retreat list at the
+  start of every round.
 
 Everything else the engine had to assume is listed in
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md).

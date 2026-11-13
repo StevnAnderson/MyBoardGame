@@ -9,7 +9,9 @@ import type { Card, RangeBand, Team } from "./types";
  *  3. Every band is simultaneous: both sides total their damage before applying it.
  *  4. Damage is applied card-by-card left-to-right. Threatening cards must take it;
  *     non-threatening (and retreating) cards may be skipped. Excess carries over.
- *  5. Retreating units leave after any band that deals damage. They do not fight.
+ *  5. At the start of every round — the first one included, right after outnumber
+ *     damage — the player picks which units retreat. Retreating units do not fight
+ *     and leave after any band that deals damage.
  *  6. An army reduced to structures only eats one unopposed damage loop, then loses.
  *
  * v1 resolves a single army per side (the atomic battle). Multi-army conflict
@@ -102,8 +104,30 @@ export interface BattleInput {
   targetPolicy?: TargetPolicy;
 }
 
+/** A single card the player can choose to withdraw at the start of a round. */
+export interface RetreatOption {
+  uid: string;
+  typeId: string;
+  hp: number;
+  retreating: boolean;
+}
+
+/** UIDs chosen to withdraw this round, one list per team. */
+export type RetreatChoices = Record<Team, string[]>;
+
+/** Yielded at the start of every round so the player can pick retreats. */
+export interface RetreatPrompt {
+  round: number;
+  units: Record<Team, RetreatOption[]>;
+  hasRetreatHex: Record<Team, boolean>;
+  outnumber: BattleResult["outnumber"];
+  /** Everything resolved so far, so a UI can show the log while the fight plays out. */
+  rounds: RoundLog[];
+}
+
 const isUnit = (card: Card) => getDefinition(card.typeId).kind === "unit";
 const isAlive = (card: Card) => card.hp > 0;
+const TEAMS: Team[] = ["a", "b"];
 
 export function unitCount(cards: Card[]): number {
   return cards.filter((card) => isAlive(card) && isUnit(card)).length;
@@ -116,6 +140,11 @@ export function totalHp(cards: Card[]): number {
 /** Units that are still shooting/fighting. Retreating units are out of the fight. */
 function fightingUnits(cards: Card[]): Card[] {
   return cards.filter((card) => isAlive(card) && isUnit(card) && !card.retreating);
+}
+
+/** Living units, whether or not they are already marked as retreating. */
+function livingUnits(cards: Card[]): Card[] {
+  return cards.filter((card) => isAlive(card) && isUnit(card));
 }
 
 function liveStructures(cards: Card[]): Card[] {
@@ -186,27 +215,122 @@ function outnumberDamage(attackerUnits: number, defenderUnits: number): number {
   return Math.floor((attackerUnits - defenderUnits) / 2);
 }
 
-export function resolveBattle(input: BattleInput): BattleResult {
-  const policy = input.targetPolicy ?? smartTargetPolicy;
-  const maxRounds = input.maxRounds ?? 20;
+interface BattleState {
+  sides: Record<Team, ArmySetup>;
+  policy: TargetPolicy;
+  maxRounds: number;
+  outnumber: BattleResult["outnumber"];
+  rounds: RoundLog[];
+  startingUnits: Record<Team, number>;
+  blockedNotes: string[];
+}
 
-  const sides: Record<Team, ArmySetup> = {
-    a: { ...input.a, cards: input.a.cards.map((card) => ({ ...card })) },
-    b: { ...input.b, cards: input.b.cards.map((card) => ({ ...card })) },
+function allUnitsRetreating(sides: Record<Team, ArmySetup>, team: Team): boolean {
+  const units = livingUnits(sides[team].cards);
+  return units.length > 0 && units.every((card) => card.retreating);
+}
+
+function retreatOption(card: Card): RetreatOption {
+  return {
+    uid: card.uid,
+    typeId: card.typeId,
+    hp: card.hp,
+    retreating: card.retreating,
   };
+}
+
+function visibleRounds(state: BattleState): RoundLog[] {
+  if (state.blockedNotes.length === 0) return state.rounds.slice();
+  return [
+    { index: -1, bands: [], note: state.blockedNotes.join(" ") },
+    ...state.rounds,
+  ];
+}
+
+function retreatPrompt(state: BattleState, round: number): RetreatPrompt {
+  return {
+    round,
+    units: {
+      a: livingUnits(state.sides.a.cards).map(retreatOption),
+      b: livingUnits(state.sides.b.cards).map(retreatOption),
+    },
+    hasRetreatHex: {
+      a: state.sides.a.hasRetreatHex,
+      b: state.sides.b.hasRetreatHex,
+    },
+    outnumber: state.outnumber,
+    rounds: visibleRounds(state),
+  };
+}
+
+/**
+ * Store this round's choices on the cards. A side with no legal retreat hex
+ * cannot withdraw: every chosen unit is turned upright and the round says so.
+ */
+function applyRetreatChoices(
+  sides: Record<Team, ArmySetup>,
+  choices: RetreatChoices | undefined,
+): string | null {
+  const notes: string[] = [];
+  for (const team of TEAMS) {
+    const side = sides[team];
+    const units = livingUnits(side.cards);
+    const selected = new Set(
+      choices?.[team] ?? units.filter((card) => card.retreating).map((card) => card.uid),
+    );
+
+    if (!side.hasRetreatHex) {
+      const attempted = units.some((card) => selected.has(card.uid));
+      units.forEach((card) => {
+        card.retreating = false;
+      });
+      if (attempted) {
+        notes.push(
+          `${label(side.label)} declared a retreat with no legal hex — those units turned upright and fought.`,
+        );
+      }
+      continue;
+    }
+
+    units.forEach((card) => {
+      card.retreating = selected.has(card.uid);
+    });
+  }
+  return notes.length > 0 ? notes.join(" ") : null;
+}
+
+/**
+ * Step through a battle, yielding at the start of every round so the caller can
+ * choose retreats — including the first round, right after outnumber damage.
+ * Pass the chosen UIDs back with `iterator.next({ a: [...], b: [...] })`; the
+ * return value is the final battle result. `resolveBattle` runs this to
+ * completion without prompting.
+ */
+export function* iterateBattle(
+  input: BattleInput,
+): Generator<RetreatPrompt, BattleResult, RetreatChoices> {
+  const state: BattleState = {
+    sides: {
+      a: { ...input.a, cards: input.a.cards.map((card) => ({ ...card })) },
+      b: { ...input.b, cards: input.b.cards.map((card) => ({ ...card })) },
+    },
+    policy: input.targetPolicy ?? smartTargetPolicy,
+    maxRounds: input.maxRounds ?? 20,
+    outnumber: null,
+    rounds: [],
+    startingUnits: {
+      a: unitCount(input.a.cards),
+      b: unitCount(input.b.cards),
+    },
+    blockedNotes: [],
+  };
+
+  const { sides, policy, maxRounds, rounds, startingUnits } = state;
   const other: Record<Team, Team> = { a: "b", b: "a" };
 
-  const startingUnits: Record<Team, number> = {
-    a: unitCount(sides.a.cards),
-    b: unitCount(sides.b.cards),
-  };
-
-  const rounds: RoundLog[] = [];
-  let outnumber: BattleResult["outnumber"] = null;
-
   const finish = (winner: Team | "draw", reason: string): BattleResult => ({
-    outnumber,
-    rounds,
+    outnumber: state.outnumber,
+    rounds: visibleRounds(state),
     winner,
     reason,
     survivors: {
@@ -216,26 +340,22 @@ export function resolveBattle(input: BattleInput): BattleResult {
     startingUnits,
   });
 
-  // A side may only declare a retreat if it has somewhere legal to go.
-  // Otherwise the cards are turned upright and fight.
-  const blockedRetreat = (team: Team) => {
+  // Initial marks are the default for the round-1 retreat choice. A side with
+  // no legal hex cannot use them, so turn those units upright before the fight.
+  for (const team of TEAMS) {
     const side = sides[team];
-    if (side.hasRetreatHex) return false;
-    const hadRetreats = side.cards.some((card) => card.retreating);
+    if (side.hasRetreatHex) continue;
+    if (!side.cards.some((card) => card.retreating && isUnit(card))) continue;
     side.cards.forEach((card) => {
-      card.retreating = false;
+      if (isUnit(card)) card.retreating = false;
     });
-    return hadRetreats;
-  };
-  const blockedA = blockedRetreat("a");
-  const blockedB = blockedRetreat("b");
+    state.blockedNotes.push(
+      `${label(side.label)} declared a retreat with no legal hex — those units turned upright and fought.`,
+    );
+  }
 
   // Mutual full withdrawal: both armies pull everything back before a shot is fired.
-  const allUnitsRetreating = (team: Team) => {
-    const units = sides[team].cards.filter((card) => isAlive(card) && isUnit(card));
-    return units.length > 0 && units.every((card) => card.retreating);
-  };
-  if (allUnitsRetreating("a") && allUnitsRetreating("b")) {
+  if (allUnitsRetreating(sides, "a") && allUnitsRetreating(sides, "b")) {
     rounds.push({
       index: 0,
       bands: [],
@@ -255,7 +375,7 @@ export function resolveBattle(input: BattleInput): BattleResult {
     const amount = source === "a" ? aOutnumbers : bOutnumbers;
     const target = other[source];
     const applied = applyDamage(sides[target].cards, amount, policy);
-    outnumber = {
+    state.outnumber = {
       source,
       team: target,
       total: amount,
@@ -280,6 +400,24 @@ export function resolveBattle(input: BattleInput): BattleResult {
   while (roundIndex < maxRounds) {
     roundIndex += 1;
     const round: RoundLog = { index: roundIndex, bands: [] };
+
+    // Every round opens with a retreat decision. The prompt only needs to
+    // appear while both sides still have units that could withdraw.
+    const aUnits = livingUnits(sides.a.cards);
+    const bUnits = livingUnits(sides.b.cards);
+    if (aUnits.length > 0 && bUnits.length > 0) {
+      const choices = yield retreatPrompt(state, roundIndex);
+      const note = applyRetreatChoices(sides, choices);
+      if (note) round.note = note;
+    }
+
+    // Both sides pulling every unit back ends the fight before any band fires.
+    if (allUnitsRetreating(sides, "a") && allUnitsRetreating(sides, "b")) {
+      round.note =
+        round.note ?? "Both armies withdraw every unit — no damage is dealt.";
+      rounds.push(round);
+      return finish("draw", "Both armies retreated.");
+    }
 
     // Structures-only: the opponent gets one unopposed loop, then it's over.
     const aFights = fightingUnits(sides.a.cards).length > 0;
@@ -333,7 +471,7 @@ export function resolveBattle(input: BattleInput): BattleResult {
 
       const retreats: RetreatReport[] = [];
       if (dealt > 0) {
-        for (const team of ["a", "b"] as Team[]) {
+        for (const team of TEAMS) {
           const leaving = sides[team].cards.filter(
             (card) => card.retreating && card.hp > 0 && isUnit(card),
           );
@@ -388,16 +526,25 @@ export function resolveBattle(input: BattleInput): BattleResult {
     reason = `Round limit reached (${maxRounds}) without a decision.`;
   }
 
-  if (blockedA || blockedB) {
-    const who = [blockedA ? "A" : null, blockedB ? "B" : null].filter(Boolean).join(" and ");
-    rounds.unshift({
-      index: -1,
-      bands: [],
-      note: `${who} declared a retreat with no legal hex — those units turned upright and fought.`,
+  return finish(winner, reason);
+}
+
+/**
+ * Synchronous convenience wrapper: resolves a whole battle without asking for
+ * retreat choices. Existing retreat marks on the input cards are kept, which is
+ * what the automated tests and non-interactive callers expect.
+ */
+export function resolveBattle(input: BattleInput): BattleResult {
+  const iterator = iterateBattle(input);
+  let step = iterator.next();
+  while (!step.done) {
+    const prompt = step.value;
+    step = iterator.next({
+      a: prompt.units.a.filter((unit) => unit.retreating).map((unit) => unit.uid),
+      b: prompt.units.b.filter((unit) => unit.retreating).map((unit) => unit.uid),
     });
   }
-
-  return finish(winner, reason);
+  return step.value;
 }
 
 function snapshot(card: Card): SurvivingCard {

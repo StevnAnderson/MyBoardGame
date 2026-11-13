@@ -22,7 +22,7 @@ export default function App() {
             ⬡
           </span>
           <div className="brand-text">
-            <h1>MyBoardGame</h1>
+            <h1>Sector:Gridfall</h1>
             <p>Companion · playtest kit</p>
           </div>
         </div>

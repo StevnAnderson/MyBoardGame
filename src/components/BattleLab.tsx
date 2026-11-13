@@ -1,11 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   damageProfile,
-  resolveBattle,
+  iterateBattle,
   totalHp,
   unitCount,
   type BandLog,
   type BattleResult,
+  type RetreatChoices,
+  type RetreatPrompt,
+  type RoundLog,
   type SideDamage,
 } from "../game/battle";
 import { createCard } from "../game/cards";
@@ -35,24 +38,93 @@ const PRESET_B = [
   "walker",
 ];
 
+type BattleRunner = Generator<RetreatPrompt, BattleResult, RetreatChoices>;
+
+interface LiveBattle {
+  prompt: RetreatPrompt;
+  choices: RetreatChoices;
+}
+
+function choicesFromPrompt(prompt: RetreatPrompt): RetreatChoices {
+  return {
+    a: prompt.units.a.filter((unit) => unit.retreating).map((unit) => unit.uid),
+    b: prompt.units.b.filter((unit) => unit.retreating).map((unit) => unit.uid),
+  };
+}
+
+function teamName(team: Team): string {
+  return team === "a" ? "Army A" : "Army B";
+}
+
 export function BattleLab() {
   const [armyA, setArmyA] = useLocalStorage<Card[]>("mbg.army.a", []);
   const [armyB, setArmyB] = useLocalStorage<Card[]>("mbg.army.b", []);
   const [retreatA, setRetreatA] = useLocalStorage("mbg.retreat.a", true);
   const [retreatB, setRetreatB] = useLocalStorage("mbg.retreat.b", true);
   const [result, setResult] = useState<BattleResult | null>(null);
+  const [live, setLive] = useState<LiveBattle | null>(null);
+  const runnerRef = useRef<BattleRunner | null>(null);
+
+  const clearBattle = () => {
+    runnerRef.current = null;
+    setLive(null);
+    setResult(null);
+  };
 
   const updateA = (next: (cards: Card[]) => Card[]) => {
     setArmyA(next);
-    setResult(null);
+    clearBattle();
   };
   const updateB = (next: (cards: Card[]) => Card[]) => {
     setArmyB(next);
-    setResult(null);
+    clearBattle();
   };
 
   const outnumber = useMemo(() => previewOutnumber(armyA, armyB), [armyA, armyB]);
   const canResolve = armyA.length > 0 && armyB.length > 0;
+
+  const startBattle = () => {
+    const runner = iterateBattle({
+      a: { label: "Army A", cards: armyA, hasRetreatHex: retreatA },
+      b: { label: "Army B", cards: armyB, hasRetreatHex: retreatB },
+    });
+    const step = runner.next();
+    if (step.done) {
+      runnerRef.current = null;
+      setLive(null);
+      setResult(step.value);
+      return;
+    }
+    runnerRef.current = runner;
+    setResult(null);
+    setLive({ prompt: step.value, choices: choicesFromPrompt(step.value) });
+  };
+
+  const resolveRound = () => {
+    const runner = runnerRef.current;
+    if (!runner || !live) return;
+    const step = runner.next(live.choices);
+    if (step.done) {
+      runnerRef.current = null;
+      setLive(null);
+      setResult(step.value);
+      return;
+    }
+    setLive({ prompt: step.value, choices: choicesFromPrompt(step.value) });
+  };
+
+  const toggleRetreat = (team: Team, uid: string) => {
+    setLive((current) => {
+      if (!current) return current;
+      const selected = new Set(current.choices[team]);
+      if (selected.has(uid)) selected.delete(uid);
+      else selected.add(uid);
+      return {
+        ...current,
+        choices: { ...current.choices, [team]: [...selected] },
+      };
+    });
+  };
 
   return (
     <div className="stack">
@@ -63,7 +135,7 @@ export function BattleLab() {
             onClick={() => {
               setArmyA(PRESET_A.map((typeId) => createCard(typeId)));
               setArmyB(PRESET_B.map((typeId) => createCard(typeId)));
-              setResult(null);
+              clearBattle();
             }}
           >
             Load rules example
@@ -73,7 +145,7 @@ export function BattleLab() {
             onClick={() => {
               setArmyA([]);
               setArmyB([]);
-              setResult(null);
+              clearBattle();
             }}
           >
             Clear
@@ -90,7 +162,7 @@ export function BattleLab() {
           hasRetreatHex={retreatA}
           onRetreatHexChange={(value) => {
             setRetreatA(value);
-            setResult(null);
+            clearBattle();
           }}
         />
         <ArmyPanel
@@ -101,7 +173,7 @@ export function BattleLab() {
           hasRetreatHex={retreatB}
           onRetreatHexChange={(value) => {
             setRetreatB(value);
-            setResult(null);
+            clearBattle();
           }}
         />
       </div>
@@ -120,23 +192,18 @@ export function BattleLab() {
             </span>
           )}
         </div>
-        <button
-          className="btn primary"
-          disabled={!canResolve}
-          onClick={() =>
-            setResult(
-              resolveBattle({
-                a: { label: "Army A", cards: armyA, hasRetreatHex: retreatA },
-                b: { label: "Army B", cards: armyB, hasRetreatHex: retreatB },
-              }),
-            )
-          }
-        >
-          Resolve battle
+        <button className="btn primary" disabled={!canResolve} onClick={startBattle}>
+          {live ? "Restart battle" : "Resolve battle"}
         </button>
       </div>
 
-      {result ? (
+      {live ? (
+        <LiveBattlePanel
+          live={live}
+          onToggle={toggleRetreat}
+          onContinue={resolveRound}
+        />
+      ) : result ? (
         <ResultPanel result={result} />
       ) : (
         <div className="empty-state">
@@ -144,8 +211,8 @@ export function BattleLab() {
             ⚔
           </span>
           <p>
-            Build two armies, then resolve. Mark units as retreating to see how a rout
-            plays out.
+            Build two armies, then resolve. Retreats can be chosen before the battle
+            and again at the start of every round.
           </p>
         </div>
       )}
@@ -360,6 +427,123 @@ function UnitRow({
   );
 }
 
+function LiveBattlePanel({
+  live,
+  onToggle,
+  onContinue,
+}: {
+  live: LiveBattle;
+  onToggle: (team: Team, uid: string) => void;
+  onContinue: () => void;
+}) {
+  const { prompt, choices } = live;
+  const retreating = choices.a.length + choices.b.length;
+
+  return (
+    <section className="panel result-panel battle-live">
+      <header className="result-head">
+        <div>
+          <span className="eyebrow">Battle in progress</span>
+          <h3>Round {prompt.round}</h3>
+          <p className="muted">
+            Choose which units retreat before this round resolves. Retreating units
+            deal no damage and leave after the first band that deals damage.
+          </p>
+        </div>
+      </header>
+
+      {prompt.outnumber && <OutnumberBanner outnumber={prompt.outnumber} />}
+
+      <RetreatChooser prompt={prompt} choices={choices} onToggle={onToggle} />
+
+      {prompt.rounds.length > 0 ? (
+        <RoundList rounds={prompt.rounds} />
+      ) : (
+        <p className="muted small">No damage loops have resolved yet.</p>
+      )}
+
+      <div className="live-actions">
+        <span className="muted small">
+          {retreating === 0
+            ? "No units are marked to withdraw."
+            : `${retreating} unit${retreating === 1 ? "" : "s"} marked to withdraw.`}
+        </span>
+        <button className="btn primary" onClick={onContinue}>
+          Resolve round {prompt.round}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function RetreatChooser({
+  prompt,
+  choices,
+  onToggle,
+}: {
+  prompt: RetreatPrompt;
+  choices: RetreatChoices;
+  onToggle: (team: Team, uid: string) => void;
+}) {
+  return (
+    <div className="retreat-grid">
+      {(["a", "b"] as Team[]).map((team) => {
+        const selected = new Set(choices[team]);
+        const canRetreat = prompt.hasRetreatHex[team];
+
+        return (
+          <div key={team} className={`retreat-col team-${team}`}>
+            <div className="retreat-head">
+              <span className="eyebrow">{teamName(team)}</span>
+              <span className="muted small">{selected.size} retreating</span>
+            </div>
+
+            {!canRetreat && (
+              <p className="retreat-warning">
+                No legal retreat hex — these units must turn upright and fight.
+              </p>
+            )}
+
+            {prompt.units[team].length === 0 ? (
+              <p className="muted small">No units left.</p>
+            ) : (
+              <div className="retreat-units">
+                {prompt.units[team].map((unit) => {
+                  const definition = getDefinition(unit.typeId);
+                  const active = selected.has(unit.uid);
+                  return (
+                    <button
+                      key={unit.uid}
+                      type="button"
+                      className={`retreat-unit${active ? " is-retreating" : ""}`}
+                      disabled={!canRetreat}
+                      aria-pressed={active}
+                      onClick={() => onToggle(team, unit.uid)}
+                      style={{ ["--accent" as string]: typeColor(unit.typeId) }}
+                    >
+                      <Glyph typeId={unit.typeId} size="sm" />
+                      <span className="retreat-unit-main">
+                        <span className="retreat-unit-name">{definition.name}</span>
+                        <span className="muted small">
+                          {unit.hp} HP
+                          {definition.range ? ` · ${RANGE_NAME[definition.range]}` : ""}
+                        </span>
+                      </span>
+                      <span className="retreat-mark" aria-hidden="true">
+                        {active ? "↩" : "＋"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ResultPanel({ result }: { result: BattleResult }) {
   const winnerText =
     result.winner === "draw"
@@ -388,48 +572,14 @@ function ResultPanel({ result }: { result: BattleResult }) {
         </div>
       </header>
 
-      {result.outnumber && (
-        <div className="outnumber-banner">
-          <span className="outnumber-title">Outnumber damage</span>
-          <span>
-            {result.outnumber.source === "a" ? "Army A" : "Army B"} deals{" "}
-            <strong>{result.outnumber.total}</strong> to{" "}
-            {result.outnumber.team === "a" ? "Army A" : "Army B"} before the loop.
-          </span>
-          <ApplicationList
-            side={{
-              team: result.outnumber.team,
-              total: result.outnumber.total,
-              applications: result.outnumber.applications,
-              forfeited: result.outnumber.forfeited,
-            }}
-          />
-        </div>
-      )}
+      {result.outnumber && <OutnumberBanner outnumber={result.outnumber} />}
 
-      <ol className="round-list">
-        {result.rounds.map((round, roundIndex) => (
-          <li className="round" key={`${round.index}-${roundIndex}`}>
-            <div className="round-head">
-              <span className="round-index">
-                {round.index > 0 ? `Damage loop ${round.index}` : "Setup"}
-              </span>
-            </div>
-            {round.note && <p className="round-note">{round.note}</p>}
-            {round.bands.map((band, bandIndex) => (
-              <BandView key={`${band.band}-${bandIndex}`} band={band} />
-            ))}
-            {round.bands.length === 0 && !round.note && (
-              <p className="muted small">No damage dealt.</p>
-            )}
-          </li>
-        ))}
-      </ol>
+      <RoundList rounds={result.rounds} />
 
       <div className="survivor-grid">
         {(["a", "b"] as Team[]).map((team) => (
           <div key={team} className={`survivor-col team-${team}`}>
-            <span className="eyebrow">{team === "a" ? "Army A" : "Army B"} survivors</span>
+            <span className="eyebrow">{teamName(team)} survivors</span>
             <SurvivorList cards={result.survivors[team]} />
           </div>
         ))}
@@ -440,6 +590,53 @@ function ResultPanel({ result }: { result: BattleResult }) {
         non-threatening cards are skipped unless the hit would destroy them.
       </p>
     </section>
+  );
+}
+
+function OutnumberBanner({
+  outnumber,
+}: {
+  outnumber: NonNullable<BattleResult["outnumber"]>;
+}) {
+  return (
+    <div className="outnumber-banner">
+      <span className="outnumber-title">Outnumber damage</span>
+      <span>
+        {teamName(outnumber.source)} deals <strong>{outnumber.total}</strong> to{" "}
+        {teamName(outnumber.team)} before the loop.
+      </span>
+      <ApplicationList
+        side={{
+          team: outnumber.team,
+          total: outnumber.total,
+          applications: outnumber.applications,
+          forfeited: outnumber.forfeited,
+        }}
+      />
+    </div>
+  );
+}
+
+function RoundList({ rounds }: { rounds: RoundLog[] }) {
+  return (
+    <ol className="round-list">
+      {rounds.map((round, roundIndex) => (
+        <li className="round" key={`${round.index}-${roundIndex}`}>
+          <div className="round-head">
+            <span className="round-index">
+              {round.index > 0 ? `Damage loop ${round.index}` : "Setup"}
+            </span>
+          </div>
+          {round.note && <p className="round-note">{round.note}</p>}
+          {round.bands.map((band, bandIndex) => (
+            <BandView key={`${band.band}-${bandIndex}`} band={band} />
+          ))}
+          {round.bands.length === 0 && !round.note && (
+            <p className="muted small">No damage dealt.</p>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -466,8 +663,8 @@ function BandView({ band }: { band: BandLog }) {
       )}
       {band.retreats.map((retreat) => (
         <p className="retreat-note" key={retreat.team}>
-          ↩ {retreat.uids.length} unit{retreat.uids.length === 1 ? "" : "s"} of Army{" "}
-          {retreat.team.toUpperCase()} withdrew
+          ↩ {retreat.uids.length} unit{retreat.uids.length === 1 ? "" : "s"} of{" "}
+          {teamName(retreat.team)} withdrew
         </p>
       ))}
     </div>
@@ -476,24 +673,24 @@ function BandView({ band }: { band: BandLog }) {
 
 function ApplicationList({ side }: { side: SideDamage }) {
   if (side.applications.length === 0 && side.forfeited === 0) {
-    return <p className="muted small app-empty">no targets</p>;
+    return <p className="muted small dmg-empty">no targets</p>;
   }
   return (
-    <ul className="app-list">
+    <ul className="dmg-list">
       {side.applications.map((application, index) => (
         <li
           key={`${application.uid}-${index}`}
-          className={application.destroyed ? "app destroyed" : "app"}
+          className={application.destroyed ? "dmg-row destroyed" : "dmg-row"}
         >
-          <span className="app-name">{getDefinition(application.typeId).name}</span>
-          <span className="app-hp">
+          <span className="dmg-name">{getDefinition(application.typeId).name}</span>
+          <span className="dmg-hp">
             {application.hpBefore} → {application.hpAfter}
           </span>
-          {application.destroyed && <span className="app-x">✕</span>}
+          {application.destroyed && <span className="dmg-x">✕</span>}
         </li>
       ))}
       {side.forfeited > 0 && (
-        <li className="app forfeit">{side.forfeited} damage forfeited</li>
+        <li className="dmg-row forfeit">{side.forfeited} damage forfeited</li>
       )}
     </ul>
   );

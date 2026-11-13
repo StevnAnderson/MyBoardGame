@@ -1038,6 +1038,7 @@ textarea {
 .band-sides {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 8px;
 }
 
@@ -1078,7 +1079,7 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-.app-list {
+.dmg-list {
   list-style: none;
   margin: 4px 0 0;
   padding: 0;
@@ -1088,7 +1089,7 @@ textarea {
   font-size: 11.5px;
 }
 
-.app {
+.dmg-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -1096,33 +1097,33 @@ textarea {
   color: var(--muted);
 }
 
-.app-name {
+.dmg-name {
   color: var(--text);
 }
 
-.app.destroyed .app-name {
+.dmg-row.destroyed .dmg-name {
   color: var(--red);
   text-decoration: line-through;
 }
 
-.app-hp {
+.dmg-hp {
   font-family: var(--mono);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.app-x {
+.dmg-x {
   color: var(--red);
   font-size: 10px;
 }
 
-.app.forfeit {
+.dmg-row.forfeit {
   color: var(--amber);
   font-size: 10.5px;
 }
 
-.app-empty {
+.dmg-empty {
   margin: 4px 0 0;
 }
 
@@ -1130,6 +1131,118 @@ textarea {
   margin: 6px 0 0;
   font-size: 11.5px;
   color: var(--amber);
+}
+
+/* ------------------------------------------------ between-round retreats */
+
+.battle-live {
+  border-color: color-mix(in srgb, var(--amber) 30%, var(--line));
+}
+
+.retreat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 14px;
+  border: 1px solid color-mix(in srgb, var(--amber) 22%, var(--line-soft));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--amber) 5%, transparent);
+}
+
+.retreat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.retreat-col.team-a {
+  --team: var(--cyan);
+}
+
+.retreat-col.team-b {
+  --team: var(--red);
+}
+
+.retreat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.retreat-head .eyebrow {
+  color: var(--team);
+}
+
+.retreat-warning {
+  margin: 0;
+  font-size: 11px;
+  color: var(--red);
+}
+
+.retreat-units {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.retreat-unit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.018);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.retreat-unit:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.retreat-unit.is-retreating {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+
+.retreat-unit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.retreat-unit-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.retreat-unit-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.retreat-mark {
+  margin-left: auto;
+  color: var(--amber);
+  font-size: 13px;
+}
+
+.live-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
 }
 
 .survivor-grid {
@@ -1459,6 +1572,7 @@ textarea {
   }
 
   .band-sides,
+  .retreat-grid,
   .survivor-grid {
     grid-template-columns: minmax(0, 1fr);
   }

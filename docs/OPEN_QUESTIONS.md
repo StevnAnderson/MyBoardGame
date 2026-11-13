@@ -29,7 +29,9 @@ construction" became "Complete construction".
 **Retreats** — retreating units deal no damage. They become non-threatening, can be
 skipped as targets, and leave after any band that deals damage. This keeps the
 structures-only clause consistent: a side that withdraws everything and leaves
-buildings behind does not shoot back.
+buildings behind does not shoot back. Retreats can be chosen before the battle
+starts and again at the start of every round — the first round prompt appears
+after outnumber damage.
 
 ## Engine assumptions still worth confirming
 
@@ -54,9 +56,10 @@ contested hex, consistent with "the attacking force stays on their adjacent hex"
 engine and is unit-tested, but the default attacker policy never forfeits — an
 optimal player always has a better target than wasting damage.
 
-**Retreat validity is fixed at reveal.** The rules hint that routing an enemy can
-open a legal retreat hex mid-battle. The engine checks validity once, before the
-first loop. A unit that revealed upright cannot change its mind later.
+**Retreats are chosen per round.** Units marked in the Battle Lab start round 1 as
+retreating; the round-start prompt lets either side add or remove marks before each
+round's bands resolve. A retreat declared with no legal hex is ignored for that
+round and the units turn upright. Units that leave are gone for later rounds.
 
 **Range bands are combat math, not board reach.** Damage goes to an adjacent army
 regardless of band; long range does not shoot two hexes away.
