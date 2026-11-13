@@ -249,6 +249,7 @@ function ArmyPanel({
   hasRetreatHex,
   onRetreatHexChange,
 }: ArmyPanelProps) {
+  const [dragUid, setDragUid] = useState<string | null>(null);
   const units = unitCount(cards);
   const hp = totalHp(cards);
   const profile = damageProfile(cards);
@@ -269,6 +270,16 @@ function ArmyPanel({
         card.uid === uid ? { ...card, retreating: !card.retreating } : card,
       ),
     );
+  const reorder = (uid: string) =>
+    onChange((current) => {
+      const from = current.findIndex((card) => card.uid === dragUid);
+      const to = current.findIndex((card) => card.uid === uid);
+      if (from < 0 || to < 0 || from === to) return current;
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      if (moved) next.splice(to, 0, moved);
+      return next;
+    });
 
   return (
     <section className={`panel army-panel team-${team}`}>
@@ -301,6 +312,13 @@ function ArmyPanel({
               onRemove={() => remove(card.uid)}
               onStep={(delta) => setHp(card.uid, delta)}
               onToggleRetreat={() => toggleRetreat(card.uid)}
+              isDragging={dragUid === card.uid}
+              onDragStart={() => setDragUid(card.uid)}
+              onDragEnd={() => setDragUid(null)}
+              onDrop={() => {
+                reorder(card.uid);
+                setDragUid(null);
+              }}
             />
           ))}
         </ul>
@@ -385,12 +403,20 @@ function UnitRow({
   onRemove,
   onStep,
   onToggleRetreat,
+  isDragging,
+  onDragStart,
+  onDragEnd,
+  onDrop,
 }: {
   card: Card;
   index: number;
   onRemove: () => void;
   onStep: (delta: number) => void;
   onToggleRetreat: () => void;
+  isDragging: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDrop: () => void;
 }) {
   const definition = getDefinition(card.typeId);
   const isUnit = definition.kind === "unit";
@@ -398,10 +424,24 @@ function UnitRow({
 
   return (
     <li
-      className={`unit-row${card.retreating ? " is-retreating" : ""}`}
+      className={`unit-row${card.retreating ? " is-retreating" : ""}${isDragging ? " is-dragging" : ""}`}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move";
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDrop();
+      }}
       style={{ ["--accent" as string]: typeColor(card.typeId) }}
     >
-      <span className="unit-index">{index + 1}</span>
+      <span className="unit-index" title="Drag to reorder">⠿ {index + 1}</span>
       <Glyph typeId={card.typeId} size="sm" />
       <div className="unit-main">
         <span className="unit-name">{definition.name}</span>

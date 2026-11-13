@@ -636,6 +636,17 @@ textarea {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.018);
+  cursor: grab;
+  touch-action: none;
+}
+
+.unit-row:active {
+  cursor: grabbing;
+}
+
+.unit-row.is-dragging {
+  opacity: 0.4;
+  border-color: var(--team);
 }
 
 .unit-row.is-retreating {
