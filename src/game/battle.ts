@@ -66,6 +66,7 @@ export interface SurvivingCard {
   typeId: string;
   hp: number;
   retreating: boolean;
+  retreated?: boolean;
 }
 
 export interface BattleResult {
@@ -115,10 +116,15 @@ export interface RetreatOption {
 /** UIDs chosen to withdraw this round, one list per team. */
 export type RetreatChoices = Record<Team, string[]>;
 
+export interface RoundChoices extends RetreatChoices {
+  skip?: Record<Team, string[]>;
+}
+
 /** Yielded at the start of every round so the player can pick retreats. */
 export interface RetreatPrompt {
   round: number;
   units: Record<Team, RetreatOption[]>;
+  armies: Record<Team, SurvivingCard[]>;
   hasRetreatHex: Record<Team, boolean>;
   outnumber: BattleResult["outnumber"];
   /** Everything resolved so far, so a UI can show the log while the fight plays out. */
@@ -139,12 +145,12 @@ export function totalHp(cards: Card[]): number {
 
 /** Units that are still shooting/fighting. Retreating units are out of the fight. */
 function fightingUnits(cards: Card[]): Card[] {
-  return cards.filter((card) => isAlive(card) && isUnit(card) && !card.retreating);
+  return cards.filter((card) => isAlive(card) && isUnit(card) && !card.retreating && !card.retreated);
 }
 
 /** Living units, whether or not they are already marked as retreating. */
 function livingUnits(cards: Card[]): Card[] {
-  return cards.filter((card) => isAlive(card) && isUnit(card));
+  return cards.filter((card) => isAlive(card) && isUnit(card) && !card.retreated);
 }
 
 function liveStructures(cards: Card[]): Card[] {
@@ -184,7 +190,7 @@ export function applyDamage(
   while (remaining > 0) {
     let hitThisPass = false;
     for (const card of army) {
-      if (card.hp <= 0) continue;
+      if (card.hp <= 0 || card.retreated) continue;
       if (!policy(card, remaining, army)) continue;
 
       const dealt = Math.min(remaining, card.hp);
@@ -254,6 +260,10 @@ function retreatPrompt(state: BattleState, round: number): RetreatPrompt {
       a: livingUnits(state.sides.a.cards).map(retreatOption),
       b: livingUnits(state.sides.b.cards).map(retreatOption),
     },
+    armies: {
+      a: state.sides.a.cards.map(snapshot),
+      b: state.sides.b.cards.map(snapshot),
+    },
     hasRetreatHex: {
       a: state.sides.a.hasRetreatHex,
       b: state.sides.b.hasRetreatHex,
@@ -308,13 +318,16 @@ function applyRetreatChoices(
  */
 export function* iterateBattle(
   input: BattleInput,
-): Generator<RetreatPrompt, BattleResult, RetreatChoices> {
+): Generator<RetreatPrompt, BattleResult, RoundChoices> {
   const state: BattleState = {
     sides: {
       a: { ...input.a, cards: input.a.cards.map((card) => ({ ...card })) },
       b: { ...input.b, cards: input.b.cards.map((card) => ({ ...card })) },
     },
-    policy: input.targetPolicy ?? smartTargetPolicy,
+    policy: input.targetPolicy ?? ((card) => {
+      if (card.retreated) return false;
+      return (getDefinition(card.typeId).threatening && !card.retreating) || !armySkipSet.has(card.uid);
+    }),
     maxRounds: input.maxRounds ?? 20,
     outnumber: null,
     rounds: [],
@@ -326,6 +339,7 @@ export function* iterateBattle(
   };
 
   const { sides, policy, maxRounds, rounds, startingUnits } = state;
+  let armySkipSet = new Set<string>();
   const other: Record<Team, Team> = { a: "b", b: "a" };
 
   const finish = (winner: Team | "draw", reason: string): BattleResult => ({
@@ -407,6 +421,7 @@ export function* iterateBattle(
     const bUnits = livingUnits(sides.b.cards);
     if (aUnits.length > 0 && bUnits.length > 0) {
       const choices = yield retreatPrompt(state, roundIndex);
+      armySkipSet = new Set([...(choices.skip?.a ?? []), ...(choices.skip?.b ?? [])]);
       const note = applyRetreatChoices(sides, choices);
       if (note) round.note = note;
     }
@@ -476,9 +491,7 @@ export function* iterateBattle(
             (card) => card.retreating && card.hp > 0 && isUnit(card),
           );
           if (leaving.length === 0) continue;
-          sides[team].cards = sides[team].cards.filter(
-            (card) => !(card.retreating && card.hp > 0 && isUnit(card)),
-          );
+          leaving.forEach((card) => { card.retreated = true; card.retreating = false; });
           retreats.push({ team, uids: leaving.map((card) => card.uid) });
           retreatedThisRound = true;
         }
@@ -542,13 +555,14 @@ export function resolveBattle(input: BattleInput): BattleResult {
     step = iterator.next({
       a: prompt.units.a.filter((unit) => unit.retreating).map((unit) => unit.uid),
       b: prompt.units.b.filter((unit) => unit.retreating).map((unit) => unit.uid),
+      skip: { a: [], b: [] },
     });
   }
   return step.value;
 }
 
 function snapshot(card: Card): SurvivingCard {
-  return { uid: card.uid, typeId: card.typeId, hp: card.hp, retreating: card.retreating };
+  return { uid: card.uid, typeId: card.typeId, hp: card.hp, retreating: card.retreating, retreated: card.retreated };
 }
 
 function label(value: string): string {

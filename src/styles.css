@@ -1191,7 +1191,7 @@ textarea {
 .retreat-unit {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   padding: 5px 8px;
   border: 1px solid var(--line-soft);
@@ -1199,7 +1199,7 @@ textarea {
   background: rgba(255, 255, 255, 0.018);
   color: var(--text);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .retreat-unit:hover:not(:disabled) {
@@ -1210,6 +1210,44 @@ textarea {
   border-style: dashed;
   border-color: color-mix(in srgb, var(--amber) 45%, transparent);
   background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+
+.retreat-unit.is-dead {
+  color: var(--red);
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+.retreat-unit.is-untargetable {
+  color: #aab2bf;
+  background: rgba(190, 198, 210, 0.08);
+}
+
+.retreat-unit.is-dead,
+.retreat-unit.is-dead.is-untargetable {
+  color: var(--red);
+  background: rgba(255, 80, 80, 0.06);
+  text-decoration: line-through;
+}
+
+.target-state {
+  min-width: 48px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+}
+
+.target-toggle {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.army-line-damage {
+  min-width: 58px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .retreat-unit:disabled {
@@ -1230,8 +1268,15 @@ textarea {
 
 .retreat-mark {
   margin-left: auto;
+  border: 0;
+  background: transparent;
   color: var(--amber);
   font-size: 13px;
+  cursor: pointer;
+}
+
+.retreat-mark:disabled {
+  visibility: hidden;
 }
 
 .live-actions {

@@ -6,7 +6,7 @@ import {
   unitCount,
   type BandLog,
   type BattleResult,
-  type RetreatChoices,
+  type RoundChoices,
   type RetreatPrompt,
   type RoundLog,
   type SideDamage,
@@ -38,17 +38,18 @@ const PRESET_B = [
   "walker",
 ];
 
-type BattleRunner = Generator<RetreatPrompt, BattleResult, RetreatChoices>;
+type BattleRunner = Generator<RetreatPrompt, BattleResult, RoundChoices>;
 
 interface LiveBattle {
   prompt: RetreatPrompt;
-  choices: RetreatChoices;
+  choices: RoundChoices;
 }
 
-function choicesFromPrompt(prompt: RetreatPrompt): RetreatChoices {
+function choicesFromPrompt(prompt: RetreatPrompt): RoundChoices {
   return {
     a: prompt.units.a.filter((unit) => unit.retreating).map((unit) => unit.uid),
     b: prompt.units.b.filter((unit) => unit.retreating).map((unit) => unit.uid),
+    skip: { a: [], b: [] },
   };
 }
 
@@ -123,6 +124,16 @@ export function BattleLab() {
         ...current,
         choices: { ...current.choices, [team]: [...selected] },
       };
+    });
+  };
+
+  const toggleTarget = (team: Team, uid: string) => {
+    setLive((current) => {
+      if (!current) return current;
+      const selected = new Set(current.choices.skip?.[team] ?? []);
+      if (selected.has(uid)) selected.delete(uid);
+      else selected.add(uid);
+      return { ...current, choices: { ...current.choices, skip: { a: [], b: [], ...current.choices.skip, [team]: [...selected] } } };
     });
   };
 
@@ -201,6 +212,7 @@ export function BattleLab() {
         <LiveBattlePanel
           live={live}
           onToggle={toggleRetreat}
+          onToggleTarget={toggleTarget}
           onContinue={resolveRound}
         />
       ) : result ? (
@@ -431,10 +443,12 @@ function LiveBattlePanel({
   live,
   onToggle,
   onContinue,
+  onToggleTarget,
 }: {
   live: LiveBattle;
   onToggle: (team: Team, uid: string) => void;
   onContinue: () => void;
+  onToggleTarget: (team: Team, uid: string) => void;
 }) {
   const { prompt, choices } = live;
   const retreating = choices.a.length + choices.b.length;
@@ -454,7 +468,7 @@ function LiveBattlePanel({
 
       {prompt.outnumber && <OutnumberBanner outnumber={prompt.outnumber} />}
 
-      <RetreatChooser prompt={prompt} choices={choices} onToggle={onToggle} />
+      <RetreatChooser prompt={prompt} choices={choices} onToggle={onToggle} onToggleTarget={onToggleTarget} />
 
       {prompt.rounds.length > 0 ? (
         <RoundList rounds={prompt.rounds} />
@@ -480,10 +494,12 @@ function RetreatChooser({
   prompt,
   choices,
   onToggle,
+  onToggleTarget,
 }: {
   prompt: RetreatPrompt;
-  choices: RetreatChoices;
+  choices: RoundChoices;
   onToggle: (team: Team, uid: string) => void;
+  onToggleTarget: (team: Team, uid: string) => void;
 }) {
   return (
     <div className="retreat-grid">
@@ -504,35 +520,39 @@ function RetreatChooser({
               </p>
             )}
 
-            {prompt.units[team].length === 0 ? (
-              <p className="muted small">No units left.</p>
+            {prompt.armies[team].length === 0 ? (
+              <p className="muted small">No units or structures left.</p>
             ) : (
               <div className="retreat-units">
-                {prompt.units[team].map((unit) => {
+                {prompt.armies[team].map((unit) => {
                   const definition = getDefinition(unit.typeId);
                   const active = selected.has(unit.uid);
+                  const skipped = (choices.skip?.[team] ?? []).includes(unit.uid);
+                  const dead = unit.hp <= 0;
+                  const untargetable = Boolean(unit.retreated);
+                  const threatening = definition.threatening && !active;
+                  const targetText = untargetable ? "Skip" : skipped ? "Skip" : "Target";
                   return (
-                    <button
+                    <div
                       key={unit.uid}
-                      type="button"
-                      className={`retreat-unit${active ? " is-retreating" : ""}`}
-                      disabled={!canRetreat}
-                      aria-pressed={active}
-                      onClick={() => onToggle(team, unit.uid)}
+                      className={`retreat-unit${active ? " is-retreating" : ""}${dead ? " is-dead" : ""}${untargetable ? " is-untargetable" : ""}`}
                       style={{ ["--accent" as string]: typeColor(unit.typeId) }}
                     >
                       <Glyph typeId={unit.typeId} size="sm" />
                       <span className="retreat-unit-main">
                         <span className="retreat-unit-name">{definition.name}</span>
                         <span className="muted small">
-                          {unit.hp} HP
-                          {definition.range ? ` · ${RANGE_NAME[definition.range]}` : ""}
+                          HP: {unit.hp}{unit.retreated ? " · retreated" : unit.retreating ? " · retreating" : ""}
                         </span>
                       </span>
-                      <span className="retreat-mark" aria-hidden="true">
-                        {active ? "↩" : "＋"}
-                      </span>
-                    </button>
+                      {threatening || untargetable || dead ? (
+                        <span className="target-state">{untargetable ? "Skip" : targetText}</span>
+                      ) : (
+                        <button className="target-state target-toggle" type="button" disabled={dead} onClick={() => onToggleTarget(team, unit.uid)}>{targetText}</button>
+                      )}
+                      <span className="army-line-damage">Dmg: {definition.damage}</span>
+                      <button className="retreat-mark" type="button" disabled={!canRetreat || dead || unit.retreated || !prompt.units[team].some((entry) => entry.uid === unit.uid)} aria-pressed={active} onClick={() => onToggle(team, unit.uid)} title="Toggle retreat">{active ? "↩" : "＋"}</button>
+                    </div>
                   );
                 })}
               </div>

@@ -36,4 +36,6 @@ export interface Card {
   hp: number;
   /** Units only. Marked by turning the card 90° before a battle is revealed. */
   retreating: boolean;
+  /** Permanently out of this battle after a successful retreat. */
+  retreated?: boolean;
 }
