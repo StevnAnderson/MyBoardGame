@@ -78,12 +78,16 @@ regardless of band; long range does not shoot two hexes away.
 
 **Play mode is a starter map, not the full game.** The Play tab uses a fixed 3×5
 odd-r hex grid with Player A on the top edge and Player B on the bottom edge, and
-one mineral node plus one gas node on each side edge. Each mobile unit makes one
-move per turn to an adjacent, unoccupied hex; Bases never move. Ending a turn lets
-each Worker on a resource node harvest one of that resource. Combat, building and
-spending are intentionally absent; resources are just a running score. The board
-is shared by two paired players: the host is authoritative, the guest sends
-actions, and either side can forfeit. Matching codes are 5 characters.
+one mineral node plus one gas node on each side edge. Rounds are simultaneous:
+each player queues at most one adjacent, unoccupied destination per mobile unit
+(Bases never move) and clicks Submit. Once both plans are in, they resolve
+together against the start-of-round positions. If both players target the same
+empty hex, both of those moves are cancelled. Each Worker on a resource node then
+harvests one of that resource for its own side, and the round advances. Combat,
+building and spending are intentionally absent; resources are just a running
+score. The board is shared by two paired players: the host is authoritative,
+collects both submissions and resolves the round, while the guest sends its plan.
+Either side can forfeit. Matching codes are 5 characters.
 
 **Real-time transport is peer-to-peer.** Cross-device games use WebRTC with the
 public PeerJS broker for the initial handshake; no game state touches a server.

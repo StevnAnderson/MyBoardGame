@@ -6,19 +6,22 @@ import {
   MAP_TILES,
   PLAYER_LABEL,
   UNIT_LABEL,
-  applyPlayAction,
   canMoveTo,
+  canUnitMoveTo,
   createInitialState,
   endTurn,
   harvestFor,
+  hexId,
   moveUnit,
   otherPlayer,
+  resolveRound,
   tileLabel,
   unitAt,
   unitById,
   type MapTile,
-  type PlayAction,
+  type PlayMove,
   type PlayState,
+  type PlayUnit,
   type Player,
 } from "../game/play";
 import {
@@ -96,13 +99,49 @@ function MatchFlow({
   const [busy, setBusy] = useState<"host" | "join" | null>(null);
   const [joinCode, setJoinCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [opponentReady, setOpponentReady] = useState(false);
 
   const matchRef = useRef<MatchHandle | null>(null);
   const stateRef = useRef<PlayState | null>(null);
+  const pendingRef = useRef<{ a: PlayMove[] | null; b: PlayMove[] | null }>({
+    a: null,
+    b: null,
+  });
 
   const rememberState = (next: PlayState | null) => {
+    if (!next || next.turn !== stateRef.current?.turn) {
+      pendingRef.current = { a: null, b: null };
+      setOpponentReady(false);
+    }
     stateRef.current = next;
     setState(next);
+  };
+
+  const resolveIfReady = (handle: MatchHandle) => {
+    const current = stateRef.current;
+    const pending = pendingRef.current;
+    if (!current || !pending.a || !pending.b) return;
+
+    const next = resolveRound(current, { a: pending.a, b: pending.b });
+    pendingRef.current = { a: null, b: null };
+    rememberState(next);
+    handle.send({ kind: "state", state: next });
+  };
+
+  const submitMoves = (moves: PlayMove[]) => {
+    const handle = matchRef.current;
+    if (!handle) return;
+
+    if (handle.role === "host") {
+      pendingRef.current.a = moves;
+      // Let the guest know the host is waiting on them. If the guest submitted
+      // first, the round resolves right away instead.
+      if (!pendingRef.current.b) handle.send({ kind: "ready", player: "a" });
+      resolveIfReady(handle);
+      return;
+    }
+
+    handle.send({ kind: "action", action: { type: "submit", moves } });
   };
 
   const finish = (reason: string, leaveDelay = 0) => {
@@ -155,17 +194,10 @@ function MatchFlow({
       };
       handle.onState = (next) => rememberState(next);
       handle.onMessage = (message) => {
-        if (message.kind !== "action") return;
-        const current = stateRef.current;
-        if (!current) return;
-        const next = applyPlayAction(
-          current,
-          otherPlayer(handle.player),
-          message.action,
-        );
-        if (next === current) return;
-        rememberState(next);
-        handle.send({ kind: "state", state: next });
+        if (message.kind !== "action" || message.action.type !== "submit") return;
+        pendingRef.current.b = message.action.moves;
+        setOpponentReady(true);
+        resolveIfReady(handle);
       };
       handle.onEnd = (reason) => finish(reason);
       handle.onError = (message) => setError(message);
@@ -203,6 +235,9 @@ function MatchFlow({
         setBusy(null);
         setMatch(handle);
       };
+      handle.onMessage = (message) => {
+        if (message.kind === "ready") setOpponentReady(true);
+      };
       handle.onEnd = (reason) => finish(reason);
       handle.onError = (message) => setError(message);
 
@@ -223,7 +258,8 @@ function MatchFlow({
       <OnlineStarter
         match={match}
         state={state}
-        onState={rememberState}
+        opponentReady={opponentReady}
+        onSubmit={submitMoves}
         onFinish={finish}
       />
     );
@@ -330,59 +366,71 @@ function MatchFlow({
 function OnlineStarter({
   match,
   state,
-  onState,
+  opponentReady,
+  onSubmit,
   onFinish,
 }: {
   match: MatchHandle;
   state: PlayState;
-  onState: (state: PlayState) => void;
+  opponentReady: boolean;
+  onSubmit: (moves: PlayMove[]) => void;
   onFinish: (reason: string, leaveDelay?: number) => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<PlayMove[]>([]);
+  const [submitted, setSubmitted] = useState(false);
 
   const me = match.player;
   const opponent = otherPlayer(me);
-  const myTurn = state.active === me && !state.winner;
   const selected = selectedId ? unitById(state, selectedId) : undefined;
-  const income = harvestFor(state, state.active);
-  const readyUnits = state.units.filter(
-    (unit) => unit.owner === me && unit.typeId !== "base" && !unit.moved,
-  ).length;
+  const orders = draft
+    .map((move) => ({ move, unit: unitById(state, move.unitId) }))
+    .filter(
+      (entry): entry is { move: PlayMove; unit: PlayUnit } =>
+        entry.unit !== undefined,
+    );
 
+  // A new round means both plans resolved; clear the local submission.
   useEffect(() => {
-    if (!myTurn || (selected && selected.owner !== me)) {
-      setSelectedId(null);
-    }
-  }, [myTurn, selected, me]);
-
-  const perform = (action: PlayAction) => {
-    const next = applyPlayAction(state, me, action);
-    if (next === state) return;
-    onState(next);
-    if (match.role === "host") {
-      match.send({ kind: "state", state: next });
-    } else {
-      match.send({ kind: "action", action });
-    }
     setSelectedId(null);
+    setDraft([]);
+    setSubmitted(false);
+  }, [state.turn]);
+
+  const removeOrder = (unitId: string) => {
+    setDraft((current) => current.filter((move) => move.unitId !== unitId));
   };
 
   const onTileClick = (tile: MapTile) => {
-    if (!myTurn) return;
+    if (submitted) return;
 
     const clicked = unitAt(state, tile.col, tile.row);
-    if (
-      clicked &&
-      clicked.owner === me &&
-      !clicked.moved &&
-      clicked.typeId !== "base"
-    ) {
+    if (clicked && clicked.owner === me && clicked.typeId !== "base") {
       setSelectedId((current) => (current === clicked.id ? null : clicked.id));
       return;
     }
 
-    if (!selected || selected.owner !== me) return;
-    perform({ type: "move", unitId: selected.id, col: tile.col, row: tile.row });
+    if (!selected) return;
+    if (!canUnitMoveTo(state, selected, tile.col, tile.row)) return;
+
+    const target = hexId(tile.col, tile.row);
+    const takenByAlly = draft.some(
+      (move) => move.unitId !== selected.id && hexId(move.col, move.row) === target,
+    );
+    if (takenByAlly) return;
+
+    setDraft((current) => [
+      ...current.filter((move) => move.unitId !== selected.id),
+      { unitId: selected.id, col: tile.col, row: tile.row },
+    ]);
+    setSelectedId(null);
+  };
+
+  const submit = () => {
+    if (submitted) return;
+    setSubmitted(true);
+    setSelectedId(null);
+    onSubmit(draft);
   };
 
   const forfeit = () => {
@@ -394,15 +442,15 @@ function OnlineStarter({
     );
   };
 
-  const status = state.winner
-    ? `${PLAYER_LABEL[state.winner]} wins.`
-    : !myTurn
-      ? `Waiting for ${PLAYER_LABEL[opponent]} to move…`
+  const status = submitted
+    ? `Orders submitted. Waiting for ${PLAYER_LABEL[opponent]}…`
+    : opponentReady
+      ? `${PLAYER_LABEL[opponent]} has submitted. Send your orders when ready.`
       : selected
         ? `${UNIT_LABEL[selected.typeId]} selected — click a highlighted neighbour.`
-        : readyUnits > 0
-          ? `Your turn. ${readyUnits} unit${readyUnits === 1 ? "" : "s"} ready.`
-          : "Every mobile unit has moved. End your turn to harvest and pass play.";
+        : orders.length > 0
+          ? `${orders.length} order${orders.length === 1 ? "" : "s"} queued. Submit when ready.`
+          : "Select a unit, then click a highlighted neighbouring hex to queue a move.";
 
   return (
     <div className="stack">
@@ -419,28 +467,50 @@ function OnlineStarter({
         <section className="panel play-board-panel">
           <header className="play-status">
             <div>
-              <span className="eyebrow">Round {state.turn}</span>
-              <h3 className={`play-owner owner-${state.active}`}>
-                {myTurn
-                  ? "Your turn"
-                  : `${PLAYER_LABEL[state.active]}'s turn`}
+              <span className="eyebrow">Round {state.turn} · simultaneous</span>
+              <h3 className={`play-owner owner-${me}`}>
+                {submitted ? "Orders locked" : "Plan your moves"}
               </h3>
               <p className="muted small">{status}</p>
             </div>
-            <Tag tone={state.active === "a" ? "team-a" : "team-b"}>
-              {state.active === "a" ? "Player A · top edge" : "Player B · bottom edge"}
-            </Tag>
+            <div className="play-status-tags">
+              <Tag tone={me === "a" ? "team-a" : "team-b"}>
+                {submitted ? "you submitted" : "you are planning"}
+              </Tag>
+              {opponentReady && !submitted && (
+                <Tag tone={opponent === "a" ? "team-a" : "team-b"}>
+                  {PLAYER_LABEL[opponent]} submitted
+                </Tag>
+              )}
+            </div>
           </header>
 
           <StarterBoard
             state={state}
             selectedId={selectedId}
             onTileClick={onTileClick}
+            draft={draft}
+            disabled={submitted}
+            canReach={(unit, col, row) => {
+              if (
+                draft.some(
+                  (move) =>
+                    move.unitId !== unit.id &&
+                    move.col === col &&
+                    move.row === row,
+                )
+              ) {
+                return false;
+              }
+              return canUnitMoveTo(state, unit, col, row);
+            }}
           />
 
           <div className="play-actions">
             <span className="muted small">
-              Ending the turn collects <strong>{stockSummary(income)}</strong>.
+              {orders.length > 0
+                ? `${orders.length} order${orders.length === 1 ? "" : "s"} queued. Workers harvest when both players submit.`
+                : "Queue one move per unit, then submit. Workers harvest when the round resolves."}
             </span>
             <div className="play-action-buttons">
               <button className="btn danger" type="button" onClick={forfeit}>
@@ -449,10 +519,10 @@ function OnlineStarter({
               <button
                 className="btn primary"
                 type="button"
-                onClick={() => perform({ type: "endTurn" })}
-                disabled={!myTurn}
+                onClick={submit}
+                disabled={submitted}
               >
-                End turn
+                {submitted ? "Submitted" : "Submit"}
               </button>
             </div>
           </div>
@@ -460,6 +530,37 @@ function OnlineStarter({
 
         <aside className="stack play-aside">
           <PlayStocks state={state} />
+          <section className="panel">
+            <div className="panel-head">
+              <h3>Orders</h3>
+              <span className="muted small">{orders.length} queued</span>
+            </div>
+            {orders.length === 0 ? (
+              <p className="muted small">
+                No moves queued. You can submit to hold position.
+              </p>
+            ) : (
+              <ul className="play-orders">
+                {orders.map(({ move, unit }) => (
+                  <li key={unit.id} className={`play-order owner-${unit.owner}`}>
+                    <span className="play-order-move">
+                      <strong>{UNIT_LABEL[unit.typeId]}</strong>{" "}
+                      {tileLabel(unit.col, unit.row)} → {tileLabel(move.col, move.row)}
+                    </span>
+                    <button
+                      className="play-order-remove"
+                      type="button"
+                      onClick={() => removeOrder(unit.id)}
+                      disabled={submitted}
+                      aria-label={`Remove order for ${UNIT_LABEL[unit.typeId]} at ${tileLabel(unit.col, unit.row)}`}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
           <PlayLog state={state} />
           <section className="panel">
             <div className="panel-head">
@@ -467,8 +568,19 @@ function OnlineStarter({
               <span className="muted small">code {match.code}</span>
             </div>
             <ul className="play-help">
-              <li>You control {PLAYER_LABEL[me]}.</li>
-              <li>Moves pass to your opponent as soon as you end your turn.</li>
+              <li>Both players plan at the same time.</li>
+              <li>
+                Select each Worker or Soldier and click an adjacent empty hex. Each
+                unit can make one move per round.
+              </li>
+              <li>
+                Submit your orders. When both players have submitted, every unit
+                moves at once and Workers harvest.
+              </li>
+              <li>
+                If both players enter the same hex, both of those moves are
+                cancelled.
+              </li>
               <li>
                 Forfeit declares {PLAYER_LABEL[opponent]} the winner and returns
                 both players to the matching screen.
@@ -486,10 +598,16 @@ function StarterBoard({
   state,
   selectedId,
   onTileClick,
+  canReach,
+  draft = [],
+  disabled = false,
 }: {
   state: PlayState;
   selectedId: string | null;
   onTileClick: (tile: MapTile) => void;
+  canReach: (unit: PlayUnit, col: number, row: number) => boolean;
+  draft?: PlayMove[];
+  disabled?: boolean;
 }) {
   const selected = selectedId ? unitById(state, selectedId) : undefined;
 
@@ -506,16 +624,29 @@ function StarterBoard({
       >
         {MAP_TILES.map((tile) => {
           const unit = unitAt(state, tile.col, tile.row);
-          const movable = selected
-            ? canMoveTo(state, selected, tile.col, tile.row)
-            : false;
+          const movable =
+            selected && !disabled
+              ? canReach(selected, tile.col, tile.row)
+              : false;
           const isSelected = Boolean(unit && selectedId === unit.id);
+          const draftTarget = draft.find(
+            (move) => move.col === tile.col && move.row === tile.row,
+          );
+          const draftUnit = draftTarget
+            ? unitById(state, draftTarget.unitId)
+            : undefined;
+          const draftSource = unit
+            ? draft.find((move) => move.unitId === unit.id)
+            : undefined;
           const classes = [
             "hex-tile",
             tile.resource ? `has-resource resource-${tile.resource}` : "",
             movable ? "is-move" : "",
             isSelected ? "is-selected" : "",
             unit ? `has-unit owner-${unit.owner}` : "",
+            draftTarget ? "is-draft-target" : "",
+            draftSource ? "is-draft-source" : "",
+            disabled ? "is-locked" : "",
           ]
             .filter(Boolean)
             .join(" ");
@@ -533,7 +664,7 @@ function StarterBoard({
               onClick={() => onTileClick(tile)}
               aria-label={`${tileLabel(tile.col, tile.row)}${tile.resource ? `, ${tile.resource}` : ""}${
                 unit ? `, ${PLAYER_LABEL[unit.owner]} ${UNIT_LABEL[unit.typeId]}` : ""
-              }`}
+              }${draftTarget ? `, queued move to ${tileLabel(tile.col, tile.row)}` : ""}`}
             >
               <span className="hex-face">
                 {tile.resource && (
@@ -543,12 +674,20 @@ function StarterBoard({
                 )}
                 {unit && (
                   <span
-                    className={`hex-unit owner-${unit.owner}${unit.moved ? " is-moved" : ""}`}
+                    className={`hex-unit owner-${unit.owner}${unit.moved ? " is-moved" : ""}${draftSource ? " is-queued" : ""}`}
                   >
                     <span className="hex-unit-glyph" aria-hidden="true">
                       {getDefinition(unit.typeId).glyph}
                     </span>
                     <span className="hex-unit-name">{UNIT_LABEL[unit.typeId]}</span>
+                  </span>
+                )}
+                {draftTarget && draftUnit && (
+                  <span
+                    className={`hex-draft-marker owner-${draftUnit.owner}`}
+                    aria-hidden="true"
+                  >
+                    →
                   </span>
                 )}
                 <span className="hex-coord" aria-hidden="true">
@@ -722,6 +861,7 @@ function StarterPlay() {
             state={state}
             selectedId={selectedId}
             onTileClick={onTileClick}
+            canReach={(unit, col, row) => canMoveTo(state, unit, col, row)}
           />
 
           <div className="play-actions">

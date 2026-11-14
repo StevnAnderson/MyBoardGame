@@ -34,6 +34,7 @@ export type NetMessage =
   | { kind: "welcome"; state: PlayState }
   | { kind: "state"; state: PlayState }
   | { kind: "action"; action: PlayAction }
+  | { kind: "ready"; player: Player }
   | { kind: "forfeit"; player: Player }
   | { kind: "bye" };
 
@@ -526,6 +527,9 @@ class MatchSession implements MatchHandle {
         return;
       case "action":
         if (this.role !== "host") return;
+        this.onMessage?.(message);
+        return;
+      case "ready":
         this.onMessage?.(message);
         return;
       default:

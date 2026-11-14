@@ -3,7 +3,6 @@ import {
   MAP_COLS,
   MAP_ROWS,
   MAP_TILES,
-  applyPlayAction,
   canMoveTo,
   createInitialState,
   endTurn,
@@ -11,6 +10,7 @@ import {
   isAdjacent,
   moveUnit,
   neighbors,
+  resolveRound,
   tileAt,
   unitAt,
   unitById,
@@ -145,63 +145,86 @@ describe("turns and harvesting", () => {
   });
 });
 
-describe("online match actions", () => {
-  it("applies an active player's move through the action wrapper", () => {
+describe("simultaneous rounds", () => {
+  it("moves both players' units in the same round and harvests for both", () => {
     const state = createInitialState();
 
-    const moved = applyPlayAction(state, "a", {
-      type: "move",
-      unitId: "a-worker",
-      col: 0,
-      row: 1,
+    const next = resolveRound(state, {
+      a: [
+        { unitId: "a-worker", col: 0, row: 1 },
+        { unitId: "a-soldier", col: 2, row: 1 },
+      ],
+      b: [
+        { unitId: "b-worker", col: 2, row: 3 },
+        { unitId: "b-soldier", col: 0, row: 3 },
+      ],
     });
 
-    expect(unitById(moved, "a-worker")).toMatchObject({ col: 0, row: 1, moved: true });
-    expect(moved).not.toBe(state);
+    expect(unitById(next, "a-worker")).toMatchObject({ col: 0, row: 1 });
+    expect(unitById(next, "a-soldier")).toMatchObject({ col: 2, row: 1 });
+    expect(unitById(next, "b-worker")).toMatchObject({ col: 2, row: 3 });
+    expect(unitById(next, "b-soldier")).toMatchObject({ col: 0, row: 3 });
+    expect(next.stock).toEqual({
+      a: { minerals: 1, gas: 0 },
+      b: { minerals: 1, gas: 0 },
+    });
+    expect(next.turn).toBe(2);
+    expect(unitById(next, "a-worker")?.moved).toBe(false);
   });
 
-  it("ignores moves made out of turn or on behalf of the opponent", () => {
+  it("ignores forged, impossible and duplicate moves", () => {
     const state = createInitialState();
 
-    expect(
-      applyPlayAction(state, "b", {
-        type: "move",
-        unitId: "a-worker",
-        col: 0,
-        row: 1,
-      }),
-    ).toBe(state);
+    const next = resolveRound(state, {
+      a: [
+        // Not Player A's unit.
+        { unitId: "b-worker", col: 2, row: 3 },
+        // Bases never move.
+        { unitId: "a-base", col: 1, row: 1 },
+        // Not adjacent.
+        { unitId: "a-worker", col: 2, row: 2 },
+        // The first move for the soldier is kept; the second is ignored.
+        { unitId: "a-soldier", col: 2, row: 1 },
+        { unitId: "a-soldier", col: 0, row: 0 },
+      ],
+      b: [],
+    });
 
-    expect(
-      applyPlayAction(state, "a", {
-        type: "move",
-        unitId: "b-soldier",
-        col: 0,
-        row: 3,
-      }),
-    ).toBe(state);
+    expect(unitById(next, "b-worker")).toMatchObject({ col: 2, row: 4 });
+    expect(unitById(next, "a-base")).toMatchObject({ col: 1, row: 0 });
+    expect(unitById(next, "a-worker")).toMatchObject({ col: 0, row: 0 });
+    expect(unitById(next, "a-soldier")).toMatchObject({ col: 2, row: 1 });
+    expect(next.turn).toBe(2);
   });
 
-  it("ends the turn only for the active player", () => {
+  it("cancels both moves when the players contest the same hex", () => {
     const state = createInitialState();
+    const units = state.units.map((unit) => {
+      if (unit.id === "a-worker") return { ...unit, col: 1, row: 2 };
+      if (unit.id === "b-worker") return { ...unit, col: 2, row: 3 };
+      return unit;
+    });
 
-    expect(applyPlayAction(state, "b", { type: "endTurn" })).toBe(state);
+    const next = resolveRound(
+      { ...state, units },
+      {
+        a: [{ unitId: "a-worker", col: 2, row: 2 }],
+        b: [{ unitId: "b-worker", col: 2, row: 2 }],
+      },
+    );
 
-    const next = applyPlayAction(state, "a", { type: "endTurn" });
-    expect(next.active).toBe("b");
+    expect(unitById(next, "a-worker")).toMatchObject({ col: 1, row: 2 });
+    expect(unitById(next, "b-worker")).toMatchObject({ col: 2, row: 3 });
+    expect(next.log.some((line) => line.includes("Contested"))).toBe(true);
   });
 
-  it("forfeits at any time and declares the other player the winner", () => {
+  it("advances the round when both sides hold position", () => {
     const state = createInitialState();
 
-    const resigned = applyPlayAction(state, "b", { type: "forfeit" });
+    const next = resolveRound(state, { a: [], b: [] });
 
-    expect(resigned.winner).toBe("a");
-    expect(resigned.active).toBe("a");
-    expect(resigned.log.at(-1)).toMatch(/Player B forfeited/i);
-    // Once there is a winner, further actions are ignored.
-    expect(
-      applyPlayAction(resigned, "a", { type: "endTurn" }),
-    ).toBe(resigned);
+    expect(next.turn).toBe(2);
+    expect(next.units).toEqual(state.units);
+    expect(next.stock).toEqual(state.stock);
   });
 });

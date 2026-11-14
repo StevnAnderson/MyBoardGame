@@ -3,8 +3,9 @@
  *
  * The board is three hex columns wide and five rows deep. Player A starts on the
  * top edge and Player B on the bottom edge; the left and right edges carry the
- * mineral and gas nodes. A turn lets each unmoved unit step to one adjacent hex,
- * then ending the turn lets Workers standing on a resource node harvest it.
+ * mineral and gas nodes. Both players plan at the same time: each mobile unit
+ * may step to one adjacent hex, then both plans resolve together. Workers
+ * standing on a resource node harvest at the end of the round.
  *
  * This is deliberately framework-free so the movement/harvest rules can be
  * tested without React.
@@ -28,8 +29,21 @@ export interface PlayUnit extends HexCoord {
   id: string;
   owner: Player;
   typeId: PlayUnitType;
-  /** A unit may make one move per turn. */
+  /** A unit may make one move per round. */
   moved: boolean;
+}
+
+/** One unit's planned step for the coming round. */
+export interface PlayMove {
+  unitId: string;
+  col: number;
+  row: number;
+}
+
+/** Both players' plans for a round. The host pairs these up before resolving. */
+export interface RoundSubmissions {
+  a: PlayMove[];
+  b: PlayMove[];
 }
 
 export interface Stock {
@@ -47,10 +61,9 @@ export interface PlayState {
   winner: Player | null;
 }
 
-/** Everything a player can do on their turn, plus resigning the match. */
+/** Everything a player can send during an online match. */
 export type PlayAction =
-  | { type: "move"; unitId: string; col: number; row: number }
-  | { type: "endTurn" }
+  | { type: "submit"; moves: PlayMove[] }
   | { type: "forfeit" };
 
 export const MAP_COLS = 3;
@@ -173,11 +186,21 @@ export function isAdjacent(from: HexCoord, to: HexCoord): boolean {
   );
 }
 
-export function canMoveTo(state: PlayState, unit: PlayUnit, col: number, row: number): boolean {
-  if (unit.owner !== state.active || unit.moved || unit.typeId === "base") return false;
+export function canUnitMoveTo(
+  state: PlayState,
+  unit: PlayUnit,
+  col: number,
+  row: number,
+): boolean {
+  if (unit.moved || unit.typeId === "base") return false;
   if (!inBounds(col, row)) return false;
   if (!isAdjacent(unit, { col, row })) return false;
   return unitAt(state, col, row) === undefined;
+}
+
+export function canMoveTo(state: PlayState, unit: PlayUnit, col: number, row: number): boolean {
+  if (unit.owner !== state.active) return false;
+  return canUnitMoveTo(state, unit, col, row);
 }
 
 export function moveUnit(
@@ -248,33 +271,128 @@ export function endTurn(state: PlayState): PlayState {
   };
 }
 
-/**
- * Apply an action on behalf of one player. Used by the online match: the host
- * runs this for both sides, so an out-of-turn or forged move is simply ignored.
- */
-export function applyPlayAction(
+interface AcceptedMove {
+  player: Player;
+  unit: PlayUnit;
+  move: PlayMove;
+}
+
+function acceptedMoves(
   state: PlayState,
   player: Player,
-  action: PlayAction,
+  moves: PlayMove[],
+): AcceptedMove[] {
+  const accepted: AcceptedMove[] = [];
+  const claimedUnits = new Set<string>();
+  const claimedTargets = new Set<string>();
+
+  for (const move of moves) {
+    const unit = unitById(state, move.unitId);
+    if (!unit || unit.owner !== player) continue;
+    if (claimedUnits.has(unit.id)) continue;
+    if (!canUnitMoveTo(state, unit, move.col, move.row)) continue;
+
+    const target = hexId(move.col, move.row);
+    if (claimedTargets.has(target)) continue;
+
+    claimedUnits.add(unit.id);
+    claimedTargets.add(target);
+    accepted.push({ player, unit, move });
+  }
+
+  return accepted;
+}
+
+/**
+ * Resolve a full round from both players' plans.
+ *
+ * Every unit steps once, at the same time. Destinations are checked against the
+ * positions at the start of the round, so units cannot chain through each
+ * other. If both players pick the same empty hex, both of those moves are
+ * cancelled. Workers then harvest for their own side and the next round begins.
+ */
+export function resolveRound(
+  state: PlayState,
+  submissions: RoundSubmissions,
 ): PlayState {
   if (state.winner) return state;
 
-  if (action.type === "forfeit") {
-    const winner = otherPlayer(player);
-    return {
-      ...state,
-      winner,
-      log: [
-        ...state.log,
-        `${PLAYER_LABEL[player]} forfeited. ${PLAYER_LABEL[winner]} wins.`,
-      ].slice(-6),
-    };
+  const accepted = [
+    ...acceptedMoves(state, "a", submissions.a),
+    ...acceptedMoves(state, "b", submissions.b),
+  ];
+
+  const byTarget = new Map<string, AcceptedMove[]>();
+  for (const entry of accepted) {
+    const target = hexId(entry.move.col, entry.move.row);
+    const group = byTarget.get(target);
+    if (group) group.push(entry);
+    else byTarget.set(target, [entry]);
   }
 
-  if (state.active !== player) return state;
-  if (action.type === "endTurn") return endTurn(state);
+  const contested = accepted.filter(
+    (entry) => (byTarget.get(hexId(entry.move.col, entry.move.row))?.length ?? 0) > 1,
+  );
+  const moving = accepted.filter((entry) => !contested.includes(entry));
+  const movingByUnit = new Map(moving.map((entry) => [entry.unit.id, entry]));
 
-  const unit = unitById(state, action.unitId);
-  if (!unit || unit.owner !== player) return state;
-  return moveUnit(state, action.unitId, action.col, action.row);
+  const units = state.units.map((unit) => {
+    const entry = movingByUnit.get(unit.id);
+    return entry
+      ? { ...unit, col: entry.move.col, row: entry.move.row, moved: false }
+      : { ...unit, moved: false };
+  });
+
+  const movedState: PlayState = { ...state, units };
+  const gainedA = harvestFor(movedState, "a");
+  const gainedB = harvestFor(movedState, "b");
+
+  const log = [...state.log];
+  if (moving.length === 0) {
+    log.push("Both sides held position.");
+  } else {
+    for (const player of ["a", "b"] as Player[]) {
+      const moves = moving.filter((entry) => entry.player === player);
+      if (moves.length === 0) continue;
+      const summary = moves
+        .map(
+          (entry) =>
+            `${UNIT_LABEL[entry.unit.typeId]} ${tileLabel(entry.unit.col, entry.unit.row)}→${tileLabel(entry.move.col, entry.move.row)}`,
+        )
+        .join(", ");
+      log.push(`${PLAYER_LABEL[player]} moved ${summary}.`);
+    }
+  }
+
+  if (contested.length > 0) {
+    const targets = Array.from(
+      new Set(contested.map((entry) => tileLabel(entry.move.col, entry.move.row))),
+    );
+    log.push(`Contested ${targets.join(", ")}: both moves cancelled.`);
+  }
+
+  for (const player of ["a", "b"] as Player[]) {
+    const gained = player === "a" ? gainedA : gainedB;
+    if (gained.minerals > 0 || gained.gas > 0) {
+      log.push(`${PLAYER_LABEL[player]} ${describeHarvest(gained)}.`);
+    }
+  }
+
+  log.push(`Round ${state.turn + 1} begins.`);
+
+  return {
+    ...movedState,
+    turn: state.turn + 1,
+    stock: {
+      a: {
+        minerals: state.stock.a.minerals + gainedA.minerals,
+        gas: state.stock.a.gas + gainedA.gas,
+      },
+      b: {
+        minerals: state.stock.b.minerals + gainedB.minerals,
+        gas: state.stock.b.gas + gainedB.gas,
+      },
+    },
+    log: log.slice(-6),
+  };
 }

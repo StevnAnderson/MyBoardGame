@@ -62,11 +62,14 @@ income calculator and a notes pad. Progress and notes are kept in
 the five-character code; the other enters it under **Join Game**. Once paired, the
 matching screen gives way to the starter map: three hex columns wide and five rows
 deep, with Player A on the top edge and Player B on the bottom edge. Each edge
-carries a mineral node and a gas node. Select a Worker or Soldier and click a
-highlighted neighbour; each mobile unit moves once per turn. Ending a turn
-collects one resource for every Worker standing on a node, then passes play.
-Resources are the score. **Forfeit** declares the opponent the winner and returns
-both players to matching. Combat, building and spending come later.
+carries a mineral node and a gas node. Both players plan at the same time: select
+a Worker or Soldier and click a highlighted neighbour to queue its move, then
+click **Submit**. When both sides have submitted, every unit moves at once. Each
+mobile unit makes one move per round and Bases never move. If both players pick
+the same empty hex, both of those moves are cancelled. Every Worker standing on a
+node then harvests one of that resource, and the next round begins. Resources are
+the score. **Forfeit** declares the opponent the winner and returns both players to
+matching. Combat, building and spending come later.
 
 Host and guest connect directly over WebRTC (signalled by the free PeerJS broker).
 Tabs in the same browser also pair over `BroadcastChannel`, so a code works offline
@@ -81,8 +84,8 @@ src/game/types.ts       cards, costs, range bands
 src/game/codex.ts       stat blocks transcribed from BoardGame.docx
 src/game/battle.ts      the battle rules engine (framework-free, unit tested)
 src/game/battle.test.ts damage loop, targeting, outnumber and per-round choices
-src/game/play.ts        starter-map movement, harvesting and turns
-src/game/play.test.ts   map shape, neighbours, movement and harvesting
+src/game/play.ts        starter-map movement, harvesting and simultaneous rounds
+src/game/play.test.ts   map shape, neighbours, movement, harvesting and round resolution
 src/lib/match.ts        code matchmaking: PeerJS plus BroadcastChannel fallback
 src/game/codex.test.ts    stat blocks and printed card counts
 src/components/         Codex, Battle Lab, Turn Flow and Play views
@@ -116,8 +119,9 @@ Everything else the engine had to assume is listed in
 
 The Battle Lab resolves **one army per side**, which is the atomic battle from
 the rules. The Play tab is a deliberately tiny two-player skirmish: a fixed 3×5
-map, one move per mobile unit per turn, and Worker harvesting. Multi-army
-conflict chains, full map adjacency, maneuver tokens, escorting and production
-timers are not modelled yet. See the roadmap in the open questions doc.
+map, one queued move per mobile unit per round, simultaneous resolution and
+Worker harvesting. Multi-army conflict chains, full map adjacency, maneuver
+tokens, escorting and production timers are not modelled yet. See the roadmap in
+the open questions doc.
 
 `BoardGame.docx` remains the source of truth for the rules.
