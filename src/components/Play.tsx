@@ -20,6 +20,8 @@ import {
 } from "../game/play";
 import { useLocalStorage } from "../lib/useLocalStorage";
 import { SectionHeading, Tag, typeColor } from "./ui";
+import { ChessVariants } from "./ChessVariants";
+import type { ChessVariantId } from "../game/chessVariants";
 
 const HEX_W = 76;
 const HEX_H = 88;
@@ -44,7 +46,37 @@ function stockSummary(gained: { minerals: number; gas: number }): string {
   return parts.length > 0 ? parts.join(" + ") : "nothing";
 }
 
+type PlayMode = "starter" | ChessVariantId;
+
 export function Play() {
+  const [mode, setMode] = useState<PlayMode>("starter");
+  const modes: { id: PlayMode; label: string }[] = [
+    { id: "starter", label: "Starter Skirmish" },
+    { id: "amazons", label: "Amazons" },
+    { id: "pferdeaeppel", label: "Pferdeäppel" },
+  ];
+
+  return (
+    <div className="stack">
+      <nav className="variant-tabs" aria-label="Choose a game variant">
+        {modes.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            className={`variant-tab${mode === entry.id ? " is-active" : ""}`}
+            aria-pressed={mode === entry.id}
+            onClick={() => setMode(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </nav>
+      {mode === "starter" ? <StarterPlay /> : <ChessVariants variant={mode} />}
+    </div>
+  );
+}
+
+function StarterPlay() {
   const [state, setState] = useLocalStorage<PlayState>(
     "mbg.play.state",
     createInitialState(),
