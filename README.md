@@ -2,8 +2,8 @@
 
 A web companion for the hex-and-army board game described in `BoardGame.docx`.
 It is a **design and playtest tool**, not a full digital tabletop: it holds the
-rules-derived data, resolves battles exactly as written, and walks players through
-a turn.
+rules-derived data, resolves battles exactly as written, walks players through a
+turn, and includes a small starter map you can actually play.
 
 ```bash
 npm install
@@ -32,10 +32,10 @@ HTTPS is automatic.
 client-side routing, copy `dist/index.html` to `dist/200.html` so deep links resolve;
 the current version has no routes, so that isn't needed yet.
 
-Watch out for one thing when sharing the link: the checklist, army setups and notes
-live in `localStorage`, which is per browser and per device. Two players opening the
-same URL get independent state — that's fine for a table-side tool, but it is not
-shared game state.
+Watch out for one thing when sharing the link: the checklist, army setups, map
+state and notes live in `localStorage`, which is per browser and per device. Two
+players opening the same URL get independent state — that's fine for a table-side
+tool, but it is not shared game state.
 
 ## What's in it
 
@@ -43,32 +43,43 @@ shared game state.
 status, supply limit, what it produces and what it unlocks, plus the build tree.
 
 **Battle Lab** — builds two armies and resolves the fight through the full damage
-loop. It enforces outnumber damage, simultaneous range bands, front-to-back
-targeting (threatening cards must take damage, non-threatening cards can be
-skipped), excess-damage carry-over, and the unopposed loop against an army
-reduced to structures. At the start of every round you choose which units
-retreat, including the first round right after outnumber damage. Every
-application is logged so you can see exactly why an army lost. Adding a card is
-blocked at its supply limit.
+loop. It enforces outnumber damage, simultaneous range bands, a single
+front-to-back damage pass, and the unopposed loop against an army reduced to
+structures. At the start of every round — the first one included — you choose
+which units retreat and mark each non-threatening card **Target** or **Skip**;
+threatening cards always take damage, and the marks hold for all three bands that
+round. Each pass logs the whole defending line in order: card, remaining HP,
+Target/Skip, and damage taken. Damage still left when the line ends is lost.
+Destroyed cards stay listed in red, successfully retreated cards grey out and
+become untargetable, and adding a card is blocked at its supply limit.
 
 **Turn Flow** — the phase checklist in the order the rules require, plus an
 income calculator and a notes pad. Progress and notes are kept in
 `localStorage`, so they survive a refresh.
+
+**Play** — a small playable starter map: three hex columns wide and five rows
+deep, with Player A on the top edge and Player B on the bottom edge. Each edge
+carries a mineral node and a gas node. Select a Worker or Soldier and click a
+highlighted neighbour; each mobile unit moves once per turn. Ending a turn
+collects one resource for every Worker standing on a node, then passes play.
+Resources are the score. Combat, building and spending come later.
 
 ## Project layout
 
 ```
 src/game/types.ts       cards, costs, range bands
 src/game/codex.ts       stat blocks transcribed from BoardGame.docx
-src/game/battle.ts      the rules engine (framework-free, unit tested)
-src/game/battle.test.ts damage loop, targeting, outnumber and per-round retreats
+src/game/battle.ts      the battle rules engine (framework-free, unit tested)
+src/game/battle.test.ts damage loop, targeting, outnumber and per-round choices
+src/game/play.ts        starter-map movement, harvesting and turns
+src/game/play.test.ts   map shape, neighbours, movement and harvesting
 src/game/codex.test.ts    stat blocks and printed card counts
-src/components/         Codex, Battle Lab, Turn Flow views
+src/components/         Codex, Battle Lab, Turn Flow and Play views
 docs/OPEN_QUESTIONS.md  decisions made, assumptions still worth confirming
 ```
 
-The engine in `src/game/battle.ts` has no React or DOM dependency. If the app
-later moves to async multiplayer or a server, that module comes along unchanged.
+The engines in `src/game/` have no React or DOM dependency. If the app later
+moves to async multiplayer or a server, those modules come along unchanged.
 
 ## Rules decisions
 
@@ -79,9 +90,13 @@ Settled with the designer:
 - **Supply** — the printed card counts are hard per-player limits (12 workers, 12
   soldiers, 12 walkers, 9 artillery, 6 Bases, 8 Barracks, 6 Factories, 5 Refineries).
 - **Builds** — every card takes one turn.
-- **Retreats** — retreating units deal no damage, can be skipped as targets, and
-  leave after any band that deals damage. You can change the retreat list at the
-  start of every round.
+- **Retreats** — retreating units deal no damage, are non-threatening, can be
+  skipped as targets, and leave after any band that deals damage. You can change
+  the retreat list at the start of every round; units that leave stay gone.
+- **Targeting** — damage walks the defending line once, front to back.
+  Threatening cards always take damage. Non-threatening cards default to Target
+  and can be marked Skip for the round. Leftover damage after the end of the line
+  is lost.
 
 Everything else the engine had to assume is listed in
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md).
@@ -89,8 +104,9 @@ Everything else the engine had to assume is listed in
 ## Scope
 
 The Battle Lab resolves **one army per side**, which is the atomic battle from
-the rules. Multi-army conflict chains, map adjacency, maneuver tokens, escorting
-and production timers are not modelled yet. See the roadmap in the open
-questions doc.
+the rules. The Play tab is a deliberately tiny two-player skirmish: a fixed 3×5
+map, one move per mobile unit per turn, and Worker harvesting. Multi-army
+conflict chains, full map adjacency, maneuver tokens, escorting and production
+timers are not modelled yet. See the roadmap in the open questions doc.
 
 `BoardGame.docx` remains the source of truth for the rules.

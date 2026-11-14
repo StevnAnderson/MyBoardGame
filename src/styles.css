@@ -1101,15 +1101,18 @@ textarea {
 }
 
 .dmg-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(64px, 1fr) auto auto auto;
   align-items: baseline;
-  justify-content: space-between;
   gap: 8px;
   color: var(--muted);
 }
 
 .dmg-name {
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dmg-row.destroyed .dmg-name {
@@ -1117,21 +1120,54 @@ textarea {
   text-decoration: line-through;
 }
 
-.dmg-hp {
+.dmg-row.destroyed .dmg-name::after {
+  content: " ✕";
+  font-size: 10px;
+}
+
+.dmg-row.retreated {
+  color: #aab2bf;
+  background: rgba(190, 198, 210, 0.06);
+  border-radius: 4px;
+}
+
+.dmg-row.retreated .dmg-name {
+  color: #aab2bf;
+}
+
+.dmg-row.skipped {
+  opacity: 0.55;
+}
+
+.dmg-hp,
+.dmg-amount {
   font-family: var(--mono);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.dmg-x {
-  color: var(--red);
+.dmg-choice {
+  min-width: 40px;
   font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: right;
+}
+
+.dmg-row .dmg-choice {
+  color: var(--muted);
 }
 
 .dmg-row.forfeit {
+  display: block;
   color: var(--amber);
   font-size: 10.5px;
+}
+
+.outnumber-banner .dmg-list {
+  flex-basis: 100%;
 }
 
 .dmg-empty {
@@ -1243,22 +1279,50 @@ textarea {
 
 .target-state {
   min-width: 48px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-align: center;
+  text-transform: uppercase;
+}
+
+.target-state.target {
+  color: var(--accent);
+}
+
+.target-state.skip {
+  color: var(--muted);
 }
 
 .target-toggle {
   cursor: pointer;
-  color: var(--accent);
+}
+
+.target-toggle:hover {
+  color: var(--text);
+}
+
+.army-line-hp,
+.army-line-damage {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.army-line-hp {
+  min-width: 44px;
+  color: var(--text);
 }
 
 .army-line-damage {
-  min-width: 58px;
+  min-width: 54px;
   color: var(--muted);
-  font-size: 12px;
 }
 
 .retreat-unit:disabled {
@@ -1266,15 +1330,14 @@ textarea {
   cursor: not-allowed;
 }
 
-.retreat-unit-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
 .retreat-unit-name {
+  flex: 1;
+  min-width: 0;
   font-size: 12.5px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .retreat-mark {
@@ -1564,6 +1627,303 @@ textarea {
   resize: vertical;
 }
 
+/* --------------------------------------------------------------------- play */
+
+.play-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+
+.play-aside {
+  position: sticky;
+  top: 86px;
+}
+
+.play-board-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.play-status {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.play-status h3 {
+  margin: 4px 0 2px;
+  font-size: 20px;
+}
+
+.play-status p {
+  margin: 0;
+}
+
+.play-owner.owner-a {
+  color: var(--cyan);
+}
+
+.play-owner.owner-b {
+  color: var(--red);
+}
+
+.hex-board-wrap {
+  display: grid;
+  place-items: center;
+  padding: 10px 4px;
+  overflow-x: auto;
+}
+
+.hex-board {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.hex-tile {
+  position: absolute;
+  width: var(--hex-w);
+  height: var(--hex-h);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.hex-face {
+  position: absolute;
+  inset: 2px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 70%),
+    #121a23;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  transition: background 0.14s ease;
+}
+
+.hex-tile:hover .hex-face {
+  filter: brightness(1.18);
+}
+
+.hex-tile.resource-minerals .hex-face {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--amber) 14%, transparent), transparent 74%),
+    #121a23;
+}
+
+.hex-tile.resource-gas .hex-face {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--cyan) 14%, transparent), transparent 74%),
+    #121a23;
+}
+
+.hex-tile.owner-a .hex-face {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cyan) 22%, transparent);
+}
+
+.hex-tile.owner-b .hex-face {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 22%, transparent);
+}
+
+.hex-tile.is-selected {
+  z-index: 3;
+}
+
+.hex-tile.is-selected .hex-face {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--amber) 26%, transparent), transparent 78%),
+    #16202a;
+}
+
+.hex-tile.is-move {
+  z-index: 2;
+}
+
+.hex-tile.is-move .hex-face {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--green) 20%, transparent), transparent 78%),
+    #14231c;
+}
+
+.hex-tile.is-move .hex-face::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--green);
+  opacity: 0.65;
+}
+
+.hex-resource {
+  position: absolute;
+  top: 10px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.hex-resource.minerals {
+  color: var(--amber);
+}
+
+.hex-resource.gas {
+  color: var(--cyan);
+}
+
+.hex-unit {
+  position: absolute;
+  inset: 8px 4px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.hex-unit.is-moved {
+  opacity: 0.55;
+}
+
+.hex-unit-glyph {
+  font-size: 19px;
+  line-height: 1;
+  color: var(--accent, var(--text));
+}
+
+.hex-tile.owner-a .hex-unit-name {
+  color: var(--cyan);
+}
+
+.hex-tile.owner-b .hex-unit-name {
+  color: var(--red);
+}
+
+.hex-unit-name {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hex-coord {
+  position: absolute;
+  bottom: 7px;
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.play-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.play-stock-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.play-stock {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-2);
+}
+
+.play-stock.owner-a {
+  border-color: color-mix(in srgb, var(--cyan) 30%, var(--line));
+}
+
+.play-stock.owner-b {
+  border-color: color-mix(in srgb, var(--red) 30%, var(--line));
+}
+
+.play-stock.owner-a .eyebrow {
+  color: var(--cyan);
+}
+
+.play-stock.owner-b .eyebrow {
+  color: var(--red);
+}
+
+.play-stock-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.play-stock-symbol.minerals {
+  color: var(--amber);
+}
+
+.play-stock-symbol.gas {
+  color: var(--cyan);
+}
+
+.play-stock-value {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.play-stock-label {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.play-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.play-log li {
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+
+.play-log li:first-child {
+  color: var(--text);
+  border-left-color: var(--amber);
+}
+
+.play-help {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 /* ------------------------------------------------------------------- footer */
 
 .footer {
@@ -1584,11 +1944,13 @@ textarea {
 /* --------------------------------------------------------------- responsive */
 
 @media (max-width: 980px) {
-  .turn-layout {
+  .turn-layout,
+  .play-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .turn-aside {
+  .turn-aside,
+  .play-aside {
     position: static;
   }
 }

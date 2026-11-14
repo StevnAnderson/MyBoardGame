@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { BattleLab } from "./components/BattleLab";
 import { Codex } from "./components/Codex";
+import { Play } from "./components/Play";
 import { TurnFlow } from "./components/TurnFlow";
 
-type Tab = "codex" | "battle" | "turn";
+type Tab = "codex" | "battle" | "turn" | "play";
 
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "codex", label: "Codex", hint: "units & structures" },
   { id: "battle", label: "Battle Lab", hint: "resolve a fight" },
   { id: "turn", label: "Turn Flow", hint: "phase checklist" },
+  { id: "play", label: "Play", hint: "hex skirmish" },
 ];
 
 export default function App() {
@@ -47,6 +49,7 @@ export default function App() {
         {tab === "codex" && <Codex />}
         {tab === "battle" && <BattleLab />}
         {tab === "turn" && <TurnFlow />}
+        {tab === "play" && <Play />}
       </main>
 
       <footer className="footer">

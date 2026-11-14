@@ -4,8 +4,6 @@ import {
   damageProfile,
   iterateBattle,
   resolveBattle,
-  smartTargetPolicy,
-  type TargetPolicy,
 } from "./battle";
 import { createArmy, createCard } from "./cards";
 
@@ -14,26 +12,50 @@ const setup = (a: ReturnType<typeof createArmy>, b: ReturnType<typeof createArmy
   b: { label: "Army B", cards: b, hasRetreatHex: true },
 });
 
+const ORDER = { retreats: { a: [], b: [] as string[] }, skips: { a: [], b: [] as string[] } };
+
 describe("applyDamage", () => {
-  it("skips non-threatening cards when the damage would be wasted", () => {
+  it("targets the front card by default, even when it is non-threatening", () => {
     const refinery = createCard("refinery", "r1");
     const soldier = createCard("soldier", "s1");
 
     const result = applyDamage([refinery, soldier], 2);
 
-    expect(refinery.hp).toBe(5);
-    expect(soldier.hp).toBe(1);
+    expect(refinery.hp).toBe(3);
+    expect(soldier.hp).toBe(3);
+    expect(result.line.map((entry) => entry.choice)).toEqual(["target", "target"]);
     expect(result.forfeited).toBe(0);
   });
 
-  it("must hit threatening cards once it reaches them", () => {
-    const refinery = createCard("refinery", "r1");
-    const base = createCard("base", "b1");
+  it("skips cards the defender marked Skip and moves to the next card", () => {
+    const worker = createCard("worker", "w1");
+    const soldier = createCard("soldier", "s1");
 
-    applyDamage([refinery, base], 4);
+    const result = applyDamage([worker, soldier], 2, { skips: [worker.uid] });
 
-    expect(refinery.hp).toBe(5);
-    expect(base.hp).toBe(4);
+    expect(worker.hp).toBe(1);
+    expect(soldier.hp).toBe(1);
+    expect(result.line[0]).toMatchObject({ uid: worker.uid, choice: "skip", dealt: 0 });
+    expect(result.line[1]).toMatchObject({ uid: soldier.uid, choice: "target", dealt: 2 });
+  });
+
+  it("cannot skip threatening cards", () => {
+    const soldier = createCard("soldier", "s1");
+
+    const result = applyDamage([soldier], 2, { skips: [soldier.uid] });
+
+    expect(soldier.hp).toBe(1);
+    expect(result.line[0]).toMatchObject({ choice: "target", dealt: 2 });
+  });
+
+  it("walks the line once and loses any leftover damage", () => {
+    const army = [createCard("worker", "w1"), createCard("soldier", "s1")];
+
+    const result = applyDamage(army, 9);
+
+    expect(army.map((card) => card.hp)).toEqual([0, 0]);
+    expect(result.applications).toHaveLength(2);
+    expect(result.forfeited).toBe(5);
   });
 
   it("carries excess damage down the line", () => {
@@ -50,23 +72,47 @@ describe("applyDamage", () => {
     expect(result.forfeited).toBe(0);
   });
 
-  it("forfeits damage when the attacker declines every target", () => {
-    const never: TargetPolicy = () => false;
-    const army = [createCard("soldier", "s1")];
+  it("never targets retreated or destroyed cards", () => {
+    const worker = createCard("worker", "w1");
+    worker.retreated = true;
+    const soldier = createCard("soldier", "s1");
+    soldier.hp = 0;
+    const refinery = createCard("refinery", "r1");
 
-    const result = applyDamage(army, 6, never);
+    const result = applyDamage([worker, soldier, refinery], 2);
 
-    expect(army[0]?.hp).toBe(3);
-    expect(result.forfeited).toBe(6);
+    expect(worker.hp).toBe(1);
+    expect(soldier.hp).toBe(0);
+    expect(refinery.hp).toBe(3);
+    expect(result.line.map((entry) => entry.choice)).toEqual([
+      "skip",
+      "skip",
+      "target",
+    ]);
+    expect(result.forfeited).toBe(0);
   });
 
-  it("pours damage into the line when no threatening cards remain", () => {
-    const army = [createCard("refinery", "r1"), createCard("factory", "f1")];
+  it("returns the whole line in order with HP, choice and damage", () => {
+    const army = [
+      createCard("refinery", "r1"),
+      createCard("soldier", "s1"),
+      createCard("base", "b1"),
+    ];
 
-    applyDamage(army, 7);
+    const result = applyDamage(army, 4);
 
-    expect(army[0]?.hp).toBe(0);
-    expect(army[1]?.hp).toBe(3);
+    expect(
+      result.line.map((entry) => ({
+        uid: entry.uid,
+        hp: entry.hpAfter,
+        choice: entry.choice,
+        dealt: entry.dealt,
+      })),
+    ).toEqual([
+      { uid: "r1", hp: 1, choice: "target", dealt: 4 },
+      { uid: "s1", hp: 3, choice: "target", dealt: 0 },
+      { uid: "b1", hp: 8, choice: "target", dealt: 0 },
+    ]);
   });
 });
 
@@ -93,19 +139,27 @@ describe("resolveBattle", () => {
     const result = resolveBattle(
       setup(
         createArmy(["walker", "walker", "artillery", "artillery"]),
-        createArmy(["worker", "worker", "worker", "soldier", "soldier", "soldier", "walker", "walker"]),
+        createArmy([
+          "worker",
+          "worker",
+          "worker",
+          "soldier",
+          "soldier",
+          "soldier",
+          "walker",
+          "walker",
+        ]),
       ),
     );
 
     expect(result.startingUnits).toEqual({ a: 4, b: 8 });
     expect(result.outnumber?.source).toBe("b");
     expect(result.outnumber?.total).toBe(2);
+    expect(result.outnumber?.line).toHaveLength(4);
   });
 
   it("gives one unopposed loop against an army reduced to structures", () => {
-    const result = resolveBattle(
-      setup(createArmy(["artillery"]), createArmy(["refinery"])),
-    );
+    const result = resolveBattle(setup(createArmy(["artillery"]), createArmy(["refinery"])));
 
     expect(result.winner).toBe("a");
     expect(result.rounds.some((round) => round.note?.includes("structures"))).toBe(true);
@@ -171,7 +225,116 @@ describe("resolveBattle", () => {
     resolveBattle(setup(a, b));
 
     expect(a.map((card) => card.hp)).toEqual([3, 2]);
-    expect(smartTargetPolicy).toBeTypeOf("function");
+    expect(a.map((card) => card.retreated)).toEqual([undefined, undefined]);
+  });
+});
+
+describe("round target choices", () => {
+  it("prompts with the entire army in order, including structures", () => {
+    const steps = iterateBattle(
+      setup(createArmy(["refinery", "soldier", "base"]), createArmy(["soldier", "walker"])),
+    );
+
+    const first = steps.next();
+    if (first.done) throw new Error("expected a round 1 prompt");
+
+    expect(first.value.round).toBe(1);
+    expect(first.value.armies.a.map((card) => card.typeId)).toEqual([
+      "refinery",
+      "soldier",
+      "base",
+    ]);
+    // Only units are retreat options; structures stay in the line.
+    expect(first.value.units.a.map((card) => card.typeId)).toEqual(["soldier"]);
+  });
+
+  it("uses the round's Skip marks for every band", () => {
+    const refinery = createCard("refinery", "r1");
+    const soldier = createCard("soldier", "s1");
+    const artillery = createCard("artillery", "a1");
+
+    const steps = iterateBattle({
+      a: { label: "Army A", cards: [artillery], hasRetreatHex: true },
+      b: { label: "Army B", cards: [refinery, soldier], hasRetreatHex: true },
+    });
+
+    const first = steps.next();
+    if (first.done) throw new Error("expected a round 1 prompt");
+
+    const final = steps.next({
+      retreats: { a: [], b: [] },
+      skips: { a: [], b: [refinery.uid] },
+    });
+    if (!final.done) throw new Error("expected the battle to finish");
+
+    const longRange = final.value.rounds
+      .find((round) => round.index === 1)
+      ?.bands.find((band) => band.band === "long");
+    const attack = longRange?.damage.find((side) => side.source === "a");
+
+    expect(attack?.total).toBe(8);
+    expect(attack?.forfeited).toBe(5);
+    expect(attack?.line[0]).toMatchObject({
+      uid: refinery.uid,
+      choice: "skip",
+      dealt: 0,
+      hpAfter: 5,
+    });
+    expect(attack?.line[1]).toMatchObject({
+      uid: soldier.uid,
+      choice: "target",
+      dealt: 3,
+      destroyed: true,
+    });
+  });
+
+  it("keeps retreated cards in the roster but stops targeting them", () => {
+    const retreating = createCard("soldier", "r1");
+    retreating.retreating = true;
+    const holding = createCard("soldier", "s1");
+    const enemy = createCard("soldier", "e1");
+
+    const steps = iterateBattle({
+      a: { label: "Army A", cards: [retreating, holding], hasRetreatHex: true },
+      b: { label: "Army B", cards: [enemy], hasRetreatHex: true },
+    });
+
+    const first = steps.next();
+    if (first.done) throw new Error("expected a round 1 prompt");
+
+    const second = steps.next({
+      retreats: { a: [retreating.uid], b: [] },
+      skips: { a: [], b: [] },
+    });
+    if (second.done) throw new Error("expected a round 2 prompt");
+
+    expect(second.value.round).toBe(2);
+    expect(second.value.armies.a.map((card) => card.uid)).toEqual([
+      retreating.uid,
+      holding.uid,
+    ]);
+    expect(second.value.armies.a[0]?.retreated).toBe(true);
+    expect(second.value.units.a.map((card) => card.uid)).toEqual([holding.uid]);
+
+    const final = steps.next(ORDER);
+    if (!final.done) throw new Error("expected the battle to finish");
+
+    const melee = final.value.rounds
+      .find((round) => round.index === 2)
+      ?.bands.find((band) => band.band === "melee");
+    const defence = melee?.damage.find((side) => side.source === "b");
+
+    expect(defence?.line[0]).toMatchObject({
+      uid: retreating.uid,
+      retreated: true,
+      choice: "skip",
+      dealt: 0,
+    });
+    expect(defence?.line[1]).toMatchObject({
+      uid: holding.uid,
+      choice: "target",
+      dealt: 2,
+    });
   });
 });
 
@@ -216,7 +379,7 @@ describe("between-round retreats", () => {
     if (first.done) throw new Error("expected a round 1 prompt");
     expect(first.value.round).toBe(1);
 
-    const second = steps.next({ a: [], b: [] });
+    const second = steps.next(ORDER);
     if (second.done) throw new Error("expected a round 2 prompt");
     expect(second.value.round).toBe(2);
     expect(second.value.rounds).toHaveLength(1);
@@ -225,7 +388,10 @@ describe("between-round retreats", () => {
     const withdrawing = second.value.units.a[1];
     if (!withdrawing) throw new Error("missing unit");
 
-    const final = steps.next({ a: [withdrawing.uid], b: [] });
+    const final = steps.next({
+      retreats: { a: [withdrawing.uid], b: [] },
+      skips: { a: [], b: [] },
+    });
     if (!final.done) throw new Error("expected the battle to finish");
 
     const roundTwo = final.value.rounds.find((round) => round.index === 2);

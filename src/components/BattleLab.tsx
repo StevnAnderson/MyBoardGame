@@ -7,8 +7,8 @@ import {
   type BandLog,
   type BattleResult,
   type RoundChoices,
-  type RetreatPrompt,
   type RoundLog,
+  type RoundPrompt,
   type SideDamage,
 } from "../game/battle";
 import { createCard } from "../game/cards";
@@ -38,18 +38,20 @@ const PRESET_B = [
   "walker",
 ];
 
-type BattleRunner = Generator<RetreatPrompt, BattleResult, RoundChoices>;
+type BattleRunner = Generator<RoundPrompt, BattleResult, RoundChoices>;
 
 interface LiveBattle {
-  prompt: RetreatPrompt;
+  prompt: RoundPrompt;
   choices: RoundChoices;
 }
 
-function choicesFromPrompt(prompt: RetreatPrompt): RoundChoices {
+function choicesFromPrompt(prompt: RoundPrompt): RoundChoices {
   return {
-    a: prompt.units.a.filter((unit) => unit.retreating).map((unit) => unit.uid),
-    b: prompt.units.b.filter((unit) => unit.retreating).map((unit) => unit.uid),
-    skip: { a: [], b: [] },
+    retreats: {
+      a: prompt.units.a.filter((unit) => unit.retreating).map((unit) => unit.uid),
+      b: prompt.units.b.filter((unit) => unit.retreating).map((unit) => unit.uid),
+    },
+    skips: { a: [], b: [] },
   };
 }
 
@@ -117,12 +119,15 @@ export function BattleLab() {
   const toggleRetreat = (team: Team, uid: string) => {
     setLive((current) => {
       if (!current) return current;
-      const selected = new Set(current.choices[team]);
+      const selected = new Set(current.choices.retreats[team]);
       if (selected.has(uid)) selected.delete(uid);
       else selected.add(uid);
       return {
         ...current,
-        choices: { ...current.choices, [team]: [...selected] },
+        choices: {
+          ...current.choices,
+          retreats: { ...current.choices.retreats, [team]: [...selected] },
+        },
       };
     });
   };
@@ -130,10 +135,16 @@ export function BattleLab() {
   const toggleTarget = (team: Team, uid: string) => {
     setLive((current) => {
       if (!current) return current;
-      const selected = new Set(current.choices.skip?.[team] ?? []);
+      const selected = new Set(current.choices.skips[team]);
       if (selected.has(uid)) selected.delete(uid);
       else selected.add(uid);
-      return { ...current, choices: { ...current.choices, skip: { a: [], b: [], ...current.choices.skip, [team]: [...selected] } } };
+      return {
+        ...current,
+        choices: {
+          ...current.choices,
+          skips: { ...current.choices.skips, [team]: [...selected] },
+        },
+      };
     });
   };
 
@@ -491,7 +502,8 @@ function LiveBattlePanel({
   onToggleTarget: (team: Team, uid: string) => void;
 }) {
   const { prompt, choices } = live;
-  const retreating = choices.a.length + choices.b.length;
+  const retreating = choices.retreats.a.length + choices.retreats.b.length;
+  const skipped = choices.skips.a.length + choices.skips.b.length;
 
   return (
     <section className="panel result-panel battle-live">
@@ -500,8 +512,9 @@ function LiveBattlePanel({
           <span className="eyebrow">Battle in progress</span>
           <h3>Round {prompt.round}</h3>
           <p className="muted">
-            Choose which units retreat before this round resolves. Retreating units
-            deal no damage and leave after the first band that deals damage.
+            Choose which units retreat, then mark non-threatening cards Target or
+            Skip. Threatening cards always take damage, and these marks hold for all
+            three bands this round.
           </p>
         </div>
       </header>
@@ -521,6 +534,8 @@ function LiveBattlePanel({
           {retreating === 0
             ? "No units are marked to withdraw."
             : `${retreating} unit${retreating === 1 ? "" : "s"} marked to withdraw.`}
+          {skipped > 0 &&
+            ` ${skipped} card${skipped === 1 ? "" : "s"} marked Skip.`}
         </span>
         <button className="btn primary" onClick={onContinue}>
           Resolve round {prompt.round}
@@ -536,7 +551,7 @@ function RetreatChooser({
   onToggle,
   onToggleTarget,
 }: {
-  prompt: RetreatPrompt;
+  prompt: RoundPrompt;
   choices: RoundChoices;
   onToggle: (team: Team, uid: string) => void;
   onToggleTarget: (team: Team, uid: string) => void;
@@ -544,7 +559,8 @@ function RetreatChooser({
   return (
     <div className="retreat-grid">
       {(["a", "b"] as Team[]).map((team) => {
-        const selected = new Set(choices[team]);
+        const selected = new Set(choices.retreats[team]);
+        const skips = new Set(choices.skips[team]);
         const canRetreat = prompt.hasRetreatHex[team];
 
         return (
@@ -567,11 +583,17 @@ function RetreatChooser({
                 {prompt.armies[team].map((unit) => {
                   const definition = getDefinition(unit.typeId);
                   const active = selected.has(unit.uid);
-                  const skipped = (choices.skip?.[team] ?? []).includes(unit.uid);
                   const dead = unit.hp <= 0;
                   const untargetable = Boolean(unit.retreated);
                   const threatening = definition.threatening && !active;
-                  const targetText = untargetable ? "Skip" : skipped ? "Skip" : "Target";
+                  const skipped = skips.has(unit.uid);
+                  const choice = untargetable || dead || skipped ? "skip" : "target";
+                  const canToggleTarget = !threatening && !untargetable && !dead;
+                  const canToggleRetreat =
+                    canRetreat &&
+                    !dead &&
+                    !untargetable &&
+                    prompt.units[team].some((entry) => entry.uid === unit.uid);
                   return (
                     <div
                       key={unit.uid}
@@ -579,19 +601,33 @@ function RetreatChooser({
                       style={{ ["--accent" as string]: typeColor(unit.typeId) }}
                     >
                       <Glyph typeId={unit.typeId} size="sm" />
-                      <span className="retreat-unit-main">
-                        <span className="retreat-unit-name">{definition.name}</span>
-                        <span className="muted small">
-                          HP: {unit.hp}{unit.retreated ? " · retreated" : unit.retreating ? " · retreating" : ""}
-                        </span>
-                      </span>
-                      {threatening || untargetable || dead ? (
-                        <span className="target-state">{untargetable ? "Skip" : targetText}</span>
+                      <span className="retreat-unit-name">{definition.name}</span>
+                      <span className="army-line-hp">HP: {unit.hp}</span>
+                      {canToggleTarget ? (
+                        <button
+                          className={`target-state target-toggle ${choice}`}
+                          type="button"
+                          onClick={() => onToggleTarget(team, unit.uid)}
+                          title="Toggle Target / Skip for this round"
+                        >
+                          {choice === "target" ? "Target" : "Skip"}
+                        </button>
                       ) : (
-                        <button className="target-state target-toggle" type="button" disabled={dead} onClick={() => onToggleTarget(team, unit.uid)}>{targetText}</button>
+                        <span className={`target-state ${choice}`}>
+                          {choice === "target" ? "Target" : "Skip"}
+                        </span>
                       )}
                       <span className="army-line-damage">Dmg: {definition.damage}</span>
-                      <button className="retreat-mark" type="button" disabled={!canRetreat || dead || unit.retreated || !prompt.units[team].some((entry) => entry.uid === unit.uid)} aria-pressed={active} onClick={() => onToggle(team, unit.uid)} title="Toggle retreat">{active ? "↩" : "＋"}</button>
+                      <button
+                        className="retreat-mark"
+                        type="button"
+                        disabled={!canToggleRetreat}
+                        aria-pressed={active}
+                        onClick={() => onToggle(team, unit.uid)}
+                        title={active ? "Cancel retreat" : "Mark retreating"}
+                      >
+                        {active ? "↩" : "＋"}
+                      </button>
                     </div>
                   );
                 })}
@@ -646,8 +682,9 @@ function ResultPanel({ result }: { result: BattleResult }) {
       </div>
 
       <p className="rules-footnote">
-        Targeting walks the line front-to-back: threatening cards must take damage,
-        non-threatening cards are skipped unless the hit would destroy them.
+        Each damage pass walks the defending line once, front to back. Threatening
+        cards always take damage; non-threatening cards honour the Target/Skip marks
+        chosen at the start of the round. Damage left at the end of the line is lost.
       </p>
     </section>
   );
@@ -663,16 +700,9 @@ function OutnumberBanner({
       <span className="outnumber-title">Outnumber damage</span>
       <span>
         {teamName(outnumber.source)} deals <strong>{outnumber.total}</strong> to{" "}
-        {teamName(outnumber.team)} before the loop.
+        {teamName(outnumber.target)} before the loop.
       </span>
-      <ApplicationList
-        side={{
-          team: outnumber.team,
-          total: outnumber.total,
-          applications: outnumber.applications,
-          forfeited: outnumber.forfeited,
-        }}
-      />
+      <DamageLine side={outnumber} />
     </div>
   );
 }
@@ -711,12 +741,14 @@ function BandView({ band }: { band: BandLog }) {
       {total > 0 && (
         <div className="band-sides">
           {band.damage.map((side) => (
-            <div className={`band-side team-${side.team}`} key={side.team}>
+            <div className={`band-side team-${side.source}`} key={side.source}>
               <div className="band-side-head">
-                <span className="band-team">{side.team.toUpperCase()}</span>
+                <span className="band-team">
+                  {teamName(side.source)} → {teamName(side.target)}
+                </span>
                 <span className="band-total">{side.total}</span>
               </div>
-              <ApplicationList side={side} />
+              <DamageLine side={side} />
             </div>
           ))}
         </div>
@@ -731,26 +763,39 @@ function BandView({ band }: { band: BandLog }) {
   );
 }
 
-function ApplicationList({ side }: { side: SideDamage }) {
-  if (side.applications.length === 0 && side.forfeited === 0) {
-    return <p className="muted small dmg-empty">no targets</p>;
+/**
+ * The full defending line for one damage pass: every card, in order, with its
+ * HP after the hit, the Target/Skip mark it carried, and the damage it took.
+ */
+function DamageLine({ side }: { side: SideDamage }) {
+  if (side.line.length === 0) {
+    return <p className="muted small dmg-empty">no line</p>;
   }
   return (
     <ul className="dmg-list">
-      {side.applications.map((application, index) => (
-        <li
-          key={`${application.uid}-${index}`}
-          className={application.destroyed ? "dmg-row destroyed" : "dmg-row"}
-        >
-          <span className="dmg-name">{getDefinition(application.typeId).name}</span>
-          <span className="dmg-hp">
-            {application.hpBefore} → {application.hpAfter}
-          </span>
-          {application.destroyed && <span className="dmg-x">✕</span>}
-        </li>
-      ))}
+      {side.line.map((entry) => {
+        const definition = getDefinition(entry.typeId);
+        const classes = [
+          "dmg-row",
+          entry.destroyed ? "destroyed" : "",
+          entry.retreated ? "retreated" : "",
+          entry.choice === "skip" && !entry.destroyed && !entry.retreated ? "skipped" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          <li key={entry.uid} className={classes}>
+            <span className="dmg-name">{definition.name}</span>
+            <span className="dmg-hp">HP: {entry.hpAfter}</span>
+            <span className="dmg-choice">{entry.choice === "target" ? "Target" : "Skip"}</span>
+            <span className="dmg-amount">Dmg: {entry.dealt}</span>
+          </li>
+        );
+      })}
       {side.forfeited > 0 && (
-        <li className="dmg-row forfeit">{side.forfeited} damage forfeited</li>
+        <li className="dmg-row forfeit">
+          {side.forfeited} damage lost at the end of the line
+        </li>
       )}
     </ul>
   );
