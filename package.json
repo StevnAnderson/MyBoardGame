@@ -13,6 +13,7 @@
     "deploy": "npm run build && npx surge dist"
   },
   "dependencies": {
+    "peerjs": "^1.5.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

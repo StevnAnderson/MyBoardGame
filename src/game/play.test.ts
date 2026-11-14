@@ -3,6 +3,7 @@ import {
   MAP_COLS,
   MAP_ROWS,
   MAP_TILES,
+  applyPlayAction,
   canMoveTo,
   createInitialState,
   endTurn,
@@ -141,5 +142,66 @@ describe("turns and harvesting", () => {
     expect(state.stock.a).toEqual({ minerals: 1, gas: 0 });
     expect(unitById(state, "a-worker")?.moved).toBe(false);
     expect(unitAt(state, 0, 1)?.id).toBe(worker.id);
+  });
+});
+
+describe("online match actions", () => {
+  it("applies an active player's move through the action wrapper", () => {
+    const state = createInitialState();
+
+    const moved = applyPlayAction(state, "a", {
+      type: "move",
+      unitId: "a-worker",
+      col: 0,
+      row: 1,
+    });
+
+    expect(unitById(moved, "a-worker")).toMatchObject({ col: 0, row: 1, moved: true });
+    expect(moved).not.toBe(state);
+  });
+
+  it("ignores moves made out of turn or on behalf of the opponent", () => {
+    const state = createInitialState();
+
+    expect(
+      applyPlayAction(state, "b", {
+        type: "move",
+        unitId: "a-worker",
+        col: 0,
+        row: 1,
+      }),
+    ).toBe(state);
+
+    expect(
+      applyPlayAction(state, "a", {
+        type: "move",
+        unitId: "b-soldier",
+        col: 0,
+        row: 3,
+      }),
+    ).toBe(state);
+  });
+
+  it("ends the turn only for the active player", () => {
+    const state = createInitialState();
+
+    expect(applyPlayAction(state, "b", { type: "endTurn" })).toBe(state);
+
+    const next = applyPlayAction(state, "a", { type: "endTurn" });
+    expect(next.active).toBe("b");
+  });
+
+  it("forfeits at any time and declares the other player the winner", () => {
+    const state = createInitialState();
+
+    const resigned = applyPlayAction(state, "b", { type: "forfeit" });
+
+    expect(resigned.winner).toBe("a");
+    expect(resigned.active).toBe("a");
+    expect(resigned.log.at(-1)).toMatch(/Player B forfeited/i);
+    // Once there is a winner, further actions are ignored.
+    expect(
+      applyPlayAction(resigned, "a", { type: "endTurn" }),
+    ).toBe(resigned);
   });
 });

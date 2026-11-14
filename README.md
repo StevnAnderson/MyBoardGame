@@ -35,7 +35,8 @@ the current version has no routes, so that isn't needed yet.
 Watch out for one thing when sharing the link: the checklist, army setups, map
 state and notes live in `localStorage`, which is per browser and per device. Two
 players opening the same URL get independent state — that's fine for a table-side
-tool, but it is not shared game state.
+tool. The Play tab is the exception: use **Host Game** / **Join Game** to pair two
+browsers and share one board state.
 
 ## What's in it
 
@@ -57,12 +58,21 @@ become untargetable, and adding a card is blocked at its supply limit.
 income calculator and a notes pad. Progress and notes are kept in
 `localStorage`, so they survive a refresh.
 
-**Play** — a small playable starter map: three hex columns wide and five rows
+**Play** — opens on a matching screen. One player clicks **Host Game** and shares
+the five-character code; the other enters it under **Join Game**. Once paired, the
+matching screen gives way to the starter map: three hex columns wide and five rows
 deep, with Player A on the top edge and Player B on the bottom edge. Each edge
 carries a mineral node and a gas node. Select a Worker or Soldier and click a
 highlighted neighbour; each mobile unit moves once per turn. Ending a turn
 collects one resource for every Worker standing on a node, then passes play.
-Resources are the score. Combat, building and spending come later.
+Resources are the score. **Forfeit** declares the opponent the winner and returns
+both players to matching. Combat, building and spending come later.
+
+Host and guest connect directly over WebRTC (signalled by the free PeerJS broker).
+Tabs in the same browser also pair over `BroadcastChannel`, so a code works offline
+on one device and the flow can be tested where WebRTC is unavailable. **Practice
+locally** keeps the original hotseat starter map and the Amazons / Pferdeäppel
+variants.
 
 ## Project layout
 
@@ -73,6 +83,7 @@ src/game/battle.ts      the battle rules engine (framework-free, unit tested)
 src/game/battle.test.ts damage loop, targeting, outnumber and per-round choices
 src/game/play.ts        starter-map movement, harvesting and turns
 src/game/play.test.ts   map shape, neighbours, movement and harvesting
+src/lib/match.ts        code matchmaking: PeerJS plus BroadcastChannel fallback
 src/game/codex.test.ts    stat blocks and printed card counts
 src/components/         Codex, Battle Lab, Turn Flow and Play views
 docs/OPEN_QUESTIONS.md  decisions made, assumptions still worth confirming

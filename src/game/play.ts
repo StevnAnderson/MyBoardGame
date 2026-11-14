@@ -43,7 +43,15 @@ export interface PlayState {
   turn: number;
   stock: Record<Player, Stock>;
   log: string[];
+  /** Set when a player forfeits the online match. */
+  winner: Player | null;
 }
+
+/** Everything a player can do on their turn, plus resigning the match. */
+export type PlayAction =
+  | { type: "move"; unitId: string; col: number; row: number }
+  | { type: "endTurn" }
+  | { type: "forfeit" };
 
 export const MAP_COLS = 3;
 export const MAP_ROWS = 5;
@@ -151,7 +159,12 @@ export function createInitialState(): PlayState {
       b: { minerals: 0, gas: 0 },
     },
     log: ["Player A starts on the top edge. Select a unit, then click a neighbouring hex."],
+    winner: null,
   };
+}
+
+export function otherPlayer(player: Player): Player {
+  return player === "a" ? "b" : "a";
 }
 
 export function isAdjacent(from: HexCoord, to: HexCoord): boolean {
@@ -233,4 +246,35 @@ export function endTurn(state: PlayState): PlayState {
     turn: next === "a" ? state.turn + 1 : state.turn,
     log: [...state.log, message].slice(-6),
   };
+}
+
+/**
+ * Apply an action on behalf of one player. Used by the online match: the host
+ * runs this for both sides, so an out-of-turn or forged move is simply ignored.
+ */
+export function applyPlayAction(
+  state: PlayState,
+  player: Player,
+  action: PlayAction,
+): PlayState {
+  if (state.winner) return state;
+
+  if (action.type === "forfeit") {
+    const winner = otherPlayer(player);
+    return {
+      ...state,
+      winner,
+      log: [
+        ...state.log,
+        `${PLAYER_LABEL[player]} forfeited. ${PLAYER_LABEL[winner]} wins.`,
+      ].slice(-6),
+    };
+  }
+
+  if (state.active !== player) return state;
+  if (action.type === "endTurn") return endTurn(state);
+
+  const unit = unitById(state, action.unitId);
+  if (!unit || unit.owner !== player) return state;
+  return moveUnit(state, action.unitId, action.col, action.row);
 }

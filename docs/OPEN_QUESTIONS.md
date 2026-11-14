@@ -81,7 +81,16 @@ odd-r hex grid with Player A on the top edge and Player B on the bottom edge, an
 one mineral node plus one gas node on each side edge. Each mobile unit makes one
 move per turn to an adjacent, unoccupied hex; Bases never move. Ending a turn lets
 each Worker on a resource node harvest one of that resource. Combat, building and
-spending are intentionally absent; resources are just a running score.
+spending are intentionally absent; resources are just a running score. The board
+is shared by two paired players: the host is authoritative, the guest sends
+actions, and either side can forfeit. Matching codes are 5 characters.
+
+**Real-time transport is peer-to-peer.** Cross-device games use WebRTC with the
+public PeerJS broker for the initial handshake; no game state touches a server.
+The trade-off is that restrictive networks can block the connection, and the
+public broker is a third-party dependency. Same-browser tabs fall back to
+`BroadcastChannel`, which also makes the flow usable offline. Async/resumable
+play would still need a server.
 
 ## Still open
 
@@ -110,4 +119,6 @@ Ordered by how much each adds to a playtest:
 3. **Map layer** — grow the Play map into the real thing: variable boards, armies
    as stacks, maneuver tokens, conflict detection and battle hand-off. The starter
    3×5 map and its movement/harvest rules are the first slice.
-4. **Async play** — server-backed turns so a game can be played remotely.
+4. **Async play** — server-backed, resumable turns so a game can survive both
+   players closing their tabs. Live play is already peer-to-peer; persistence and
+   matchmaking without a shared code would need a backend.
