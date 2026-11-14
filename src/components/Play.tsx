@@ -11,13 +11,12 @@ import {
   createInitialState,
   endTurn,
   harvestFor,
-  hexId,
   moveUnit,
   otherPlayer,
   resolveRound,
   tileLabel,
-  unitAt,
   unitById,
+  unitsAt,
   type MapTile,
   type PlayMove,
   type PlayState,
@@ -377,12 +376,16 @@ function OnlineStarter({
   onFinish: (reason: string, leaveDelay?: number) => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [inspectedId, setInspectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PlayMove[]>([]);
   const [submitted, setSubmitted] = useState(false);
 
   const me = match.player;
   const opponent = otherPlayer(me);
   const selected = selectedId ? unitById(state, selectedId) : undefined;
+  const inspectedTile = inspectedId
+    ? MAP_TILES.find((tile) => tile.id === inspectedId)
+    : undefined;
   const orders = draft
     .map((move) => ({ move, unit: unitById(state, move.unitId) }))
     .filter(
@@ -402,28 +405,22 @@ function OnlineStarter({
   };
 
   const onTileClick = (tile: MapTile) => {
-    if (submitted) return;
-
-    const clicked = unitAt(state, tile.col, tile.row);
-    if (clicked && clicked.owner === me && clicked.typeId !== "base") {
-      setSelectedId((current) => (current === clicked.id ? null : clicked.id));
+    if (
+      !submitted &&
+      selected &&
+      canUnitMoveTo(state, selected, tile.col, tile.row)
+    ) {
+      setDraft((current) => [
+        ...current.filter((move) => move.unitId !== selected.id),
+        { unitId: selected.id, col: tile.col, row: tile.row },
+      ]);
+      setSelectedId(null);
       return;
     }
 
-    if (!selected) return;
-    if (!canUnitMoveTo(state, selected, tile.col, tile.row)) return;
-
-    const target = hexId(tile.col, tile.row);
-    const takenByAlly = draft.some(
-      (move) => move.unitId !== selected.id && hexId(move.col, move.row) === target,
-    );
-    if (takenByAlly) return;
-
-    setDraft((current) => [
-      ...current.filter((move) => move.unitId !== selected.id),
-      { unitId: selected.id, col: tile.col, row: tile.row },
-    ]);
-    setSelectedId(null);
+    // Clicking any hex inspects it. Own hexes list their pieces; enemy hexes
+    // deliberately reveal nothing about the stack inside.
+    setInspectedId(tile.id);
   };
 
   const submit = () => {
@@ -450,7 +447,7 @@ function OnlineStarter({
         ? `${UNIT_LABEL[selected.typeId]} selected — click a highlighted neighbour.`
         : orders.length > 0
           ? `${orders.length} order${orders.length === 1 ? "" : "s"} queued. Submit when ready.`
-          : "Select a unit, then click a highlighted neighbouring hex to queue a move.";
+          : "Click one of your hexes, choose a piece from the hex panel, then click a highlighted neighbour.";
 
   return (
     <div className="stack">
@@ -463,7 +460,21 @@ function OnlineStarter({
         </div>
       </SectionHeading>
 
-      <div className="play-layout">
+      <div className="play-layout has-inspector">
+        <aside className="stack play-aside">
+          <HexInspector
+            state={state}
+            tile={inspectedTile}
+            viewer={me}
+            selectedId={selectedId}
+            disabled={submitted}
+            draft={draft}
+            onSelect={(unitId) =>
+              setSelectedId((current) => (current === unitId ? null : unitId))
+            }
+          />
+        </aside>
+
         <section className="panel play-board-panel">
           <header className="play-status">
             <div>
@@ -488,22 +499,11 @@ function OnlineStarter({
           <StarterBoard
             state={state}
             selectedId={selectedId}
+            inspectedId={inspectedId}
             onTileClick={onTileClick}
             draft={draft}
             disabled={submitted}
-            canReach={(unit, col, row) => {
-              if (
-                draft.some(
-                  (move) =>
-                    move.unitId !== unit.id &&
-                    move.col === col &&
-                    move.row === row,
-                )
-              ) {
-                return false;
-              }
-              return canUnitMoveTo(state, unit, col, row);
-            }}
+            canReach={(unit, col, row) => canUnitMoveTo(state, unit, col, row)}
           />
 
           <div className="play-actions">
@@ -570,15 +570,24 @@ function OnlineStarter({
             <ul className="play-help">
               <li>Both players plan at the same time.</li>
               <li>
-                Select each Worker or Soldier and click an adjacent empty hex. Each
-                unit can make one move per round.
+                Click one of your hexes to inspect it. The hex panel lists every
+                piece stacked there.
+              </li>
+              <li>
+                Choose a Worker or Soldier in the panel, then click a highlighted
+                adjacent hex. Any number of allied pieces can share a hex; enemy
+                hexes cannot be entered.
+              </li>
+              <li>
+                A hex shows a dot in its owner's colour instead of every piece,
+                so inspect your stacks to see what is inside.
               </li>
               <li>
                 Submit your orders. When both players have submitted, every unit
                 moves at once and Workers harvest.
               </li>
               <li>
-                If both players enter the same hex, both of those moves are
+                If both players enter the same empty hex, both sides' moves are
                 cancelled.
               </li>
               <li>
@@ -597,6 +606,7 @@ function OnlineStarter({
 function StarterBoard({
   state,
   selectedId,
+  inspectedId = null,
   onTileClick,
   canReach,
   draft = [],
@@ -604,6 +614,7 @@ function StarterBoard({
 }: {
   state: PlayState;
   selectedId: string | null;
+  inspectedId?: string | null;
   onTileClick: (tile: MapTile) => void;
   canReach: (unit: PlayUnit, col: number, row: number) => boolean;
   draft?: PlayMove[];
@@ -623,29 +634,33 @@ function StarterBoard({
         }}
       >
         {MAP_TILES.map((tile) => {
-          const unit = unitAt(state, tile.col, tile.row);
+          const occupants = unitsAt(state, tile.col, tile.row);
+          const owner = occupants[0]?.owner;
           const movable =
             selected && !disabled
               ? canReach(selected, tile.col, tile.row)
               : false;
-          const isSelected = Boolean(unit && selectedId === unit.id);
+          const isSelected = occupants.some((unit) => unit.id === selectedId);
           const draftTarget = draft.find(
             (move) => move.col === tile.col && move.row === tile.row,
           );
           const draftUnit = draftTarget
             ? unitById(state, draftTarget.unitId)
             : undefined;
-          const draftSource = unit
-            ? draft.find((move) => move.unitId === unit.id)
-            : undefined;
+          const allQueued =
+            occupants.length > 0 &&
+            occupants.every((unit) =>
+              draft.some((move) => move.unitId === unit.id),
+            );
           const classes = [
             "hex-tile",
             tile.resource ? `has-resource resource-${tile.resource}` : "",
             movable ? "is-move" : "",
             isSelected ? "is-selected" : "",
-            unit ? `has-unit owner-${unit.owner}` : "",
+            inspectedId === tile.id ? "is-inspected" : "",
+            owner ? `has-unit owner-${owner}` : "",
             draftTarget ? "is-draft-target" : "",
-            draftSource ? "is-draft-source" : "",
+            allQueued ? "is-draft-source" : "",
             disabled ? "is-locked" : "",
           ]
             .filter(Boolean)
@@ -659,12 +674,11 @@ function StarterBoard({
               style={{
                 left: tile.col * HEX_W + (tile.row % 2 === 1 ? HEX_W / 2 : 0),
                 top: tile.row * ROW_STEP,
-                ["--accent" as string]: unit ? typeColor(unit.typeId) : undefined,
               }}
               onClick={() => onTileClick(tile)}
               aria-label={`${tileLabel(tile.col, tile.row)}${tile.resource ? `, ${tile.resource}` : ""}${
-                unit ? `, ${PLAYER_LABEL[unit.owner]} ${UNIT_LABEL[unit.typeId]}` : ""
-              }${draftTarget ? `, queued move to ${tileLabel(tile.col, tile.row)}` : ""}`}
+                owner ? `, occupied by ${PLAYER_LABEL[owner]}` : ""
+              }${draftTarget ? ", queued move here" : ""}`}
             >
               <span className="hex-face">
                 {tile.resource && (
@@ -672,15 +686,11 @@ function StarterBoard({
                     {RESOURCE_GLYPH[tile.resource]}
                   </span>
                 )}
-                {unit && (
+                {owner && (
                   <span
-                    className={`hex-unit owner-${unit.owner}${unit.moved ? " is-moved" : ""}${draftSource ? " is-queued" : ""}`}
-                  >
-                    <span className="hex-unit-glyph" aria-hidden="true">
-                      {getDefinition(unit.typeId).glyph}
-                    </span>
-                    <span className="hex-unit-name">{UNIT_LABEL[unit.typeId]}</span>
-                  </span>
+                    className={`hex-occupant-dot owner-${owner}${allQueued ? " is-queued" : ""}`}
+                    aria-hidden="true"
+                  />
                 )}
                 {draftTarget && draftUnit && (
                   <span
@@ -699,6 +709,110 @@ function StarterBoard({
         })}
       </div>
     </div>
+  );
+}
+
+function HexInspector({
+  state,
+  tile,
+  viewer,
+  selectedId,
+  onSelect,
+  draft = [],
+  disabled = false,
+}: {
+  state: PlayState;
+  tile: MapTile | undefined;
+  viewer: Player;
+  selectedId: string | null;
+  onSelect: (unitId: string) => void;
+  draft?: PlayMove[];
+  disabled?: boolean;
+}) {
+  const occupants = tile ? unitsAt(state, tile.col, tile.row) : [];
+  const owner = occupants[0]?.owner;
+  const enemy = owner !== undefined && owner !== viewer;
+  const hasSelectable = occupants.some(
+    (unit) =>
+      owner === viewer && !disabled && unit.typeId !== "base" && !unit.moved,
+  );
+
+  return (
+    <section className="panel play-inspector">
+      <div className="panel-head">
+        <h3>{tile ? `Hex ${tileLabel(tile.col, tile.row)}` : "Hex contents"}</h3>
+        {tile && !enemy && tile.resource && (
+          <span className="muted small">{tile.resource}</span>
+        )}
+      </div>
+
+      {!tile ? (
+        <p className="muted small">
+          Click a hex to inspect it. Your own hexes list every piece stacked
+          there.
+        </p>
+      ) : enemy ? (
+        <p className="play-inspector-enemy">Occupied by enemy</p>
+      ) : occupants.length === 0 ? (
+        <p className="muted small">
+          Empty hex{tile.resource ? ` with ${tile.resource}` : ""}.
+        </p>
+      ) : (
+        <>
+          <p className="muted small">
+            {occupants.length} piece{occupants.length === 1 ? "" : "s"} ·{" "}
+            {PLAYER_LABEL[owner ?? viewer]}
+          </p>
+          <ul className="play-inspector-list">
+            {occupants.map((unit) => {
+              const order = draft.find((move) => move.unitId === unit.id);
+              const selectable =
+                owner === viewer &&
+                !disabled &&
+                unit.typeId !== "base" &&
+                !unit.moved;
+              return (
+                <li key={unit.id}>
+                  <button
+                    type="button"
+                    className={`play-piece${selectedId === unit.id ? " is-selected" : ""}`}
+                    onClick={() => onSelect(unit.id)}
+                    disabled={!selectable}
+                  >
+                    <span
+                      className="play-piece-glyph"
+                      style={{ color: typeColor(unit.typeId) }}
+                      aria-hidden="true"
+                    >
+                      {getDefinition(unit.typeId).glyph}
+                    </span>
+                    <span className="play-piece-body">
+                      <strong className="play-piece-name">
+                        {UNIT_LABEL[unit.typeId]}
+                      </strong>
+                      <span className="play-piece-note">
+                        {unit.typeId === "base"
+                          ? "Structure · cannot move"
+                          : unit.moved
+                            ? "Already moved"
+                            : order
+                              ? `Queued → ${tileLabel(order.col, order.row)}`
+                              : "Ready to move"}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {owner === viewer && hasSelectable && (
+            <p className="muted small">
+              Pick a piece, then click a highlighted neighbouring hex.
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -793,32 +907,39 @@ function StarterPlay() {
     createInitialState(),
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [inspectedId, setInspectedId] = useState<string | null>(null);
 
   const selected = selectedId ? unitById(state, selectedId) : undefined;
+  const inspectedTile = inspectedId
+    ? MAP_TILES.find((tile) => tile.id === inspectedId)
+    : undefined;
   const income = harvestFor(state, state.active);
   const readyUnits = state.units.filter(
     (unit) => unit.owner === state.active && unit.typeId !== "base" && !unit.moved,
   ).length;
 
+  useEffect(() => {
+    setSelectedId(null);
+  }, [state.active]);
+
   const reset = () => {
     setState(createInitialState());
     setSelectedId(null);
+    setInspectedId(null);
   };
 
   const onTileClick = (tile: MapTile) => {
-    const clicked = unitAt(state, tile.col, tile.row);
-
-    if (clicked && clicked.owner === state.active && !clicked.moved && clicked.typeId !== "base") {
-      setSelectedId((current) => (current === clicked.id ? null : clicked.id));
+    if (selected && canMoveTo(state, selected, tile.col, tile.row)) {
+      const next = moveUnit(state, selected.id, tile.col, tile.row);
+      if (next !== state) {
+        setState(next);
+        setSelectedId(null);
+        setInspectedId(tile.id);
+      }
       return;
     }
 
-    if (!selected) return;
-    const next = moveUnit(state, selected.id, tile.col, tile.row);
-    if (next !== state) {
-      setState(next);
-      setSelectedId(null);
-    }
+    setInspectedId(tile.id);
   };
 
   const finishTurn = () => {
@@ -829,7 +950,7 @@ function StarterPlay() {
   const status = selected
     ? `${UNIT_LABEL[selected.typeId]} selected — click a highlighted neighbour.`
     : readyUnits > 0
-      ? `Select a unit to move. ${readyUnits} ready.`
+      ? "Click one of your hexes, then choose a piece from the hex panel."
       : "Every mobile unit has moved. End the turn to harvest and pass play.";
 
   return (
@@ -842,7 +963,19 @@ function StarterPlay() {
         </div>
       </SectionHeading>
 
-      <div className="play-layout">
+      <div className="play-layout has-inspector">
+        <aside className="stack play-aside">
+          <HexInspector
+            state={state}
+            tile={inspectedTile}
+            viewer={state.active}
+            selectedId={selectedId}
+            onSelect={(unitId) =>
+              setSelectedId((current) => (current === unitId ? null : unitId))
+            }
+          />
+        </aside>
+
         <section className="panel play-board-panel">
           <header className="play-status">
             <div>
@@ -860,6 +993,7 @@ function StarterPlay() {
           <StarterBoard
             state={state}
             selectedId={selectedId}
+            inspectedId={inspectedId}
             onTileClick={onTileClick}
             canReach={(unit, col, row) => canMoveTo(state, unit, col, row)}
           />
@@ -882,11 +1016,19 @@ function StarterPlay() {
               <h3>How to play</h3>
             </div>
             <ul className="play-help">
-              <li>Select a Worker or Soldier, then click a highlighted neighbouring hex.</li>
+              <li>
+                Click one of your hexes to inspect it, then choose a Worker or
+                Soldier from the hex panel.
+              </li>
+              <li>
+                Click a highlighted neighbouring hex to move. Any number of
+                allied pieces can share a hex, and enemy hexes cannot be entered.
+              </li>
+              <li>A hex shows a dot in its owner's colour instead of each piece.</li>
               <li>Each unit moves once per turn. Bases hold their edge.</li>
               <li>
                 End the turn to harvest: every Worker standing on a ◆ mineral or ▲ gas
-                node adds 1 to your stock.
+                node adds 1 to your stock, even when Workers are stacked.
               </li>
               <li>
                 Resources are the score for now. Combat, building and income spending

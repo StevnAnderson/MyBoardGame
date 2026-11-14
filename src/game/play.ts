@@ -147,8 +147,14 @@ export function neighbors(col: number, row: number): HexCoord[] {
     .filter((coord) => inBounds(coord.col, coord.row));
 }
 
+/** Every piece on a hex. A hex may hold any number of pieces from one side. */
+export function unitsAt(state: PlayState, col: number, row: number): PlayUnit[] {
+  return state.units.filter((unit) => unit.col === col && unit.row === row);
+}
+
+/** The first piece on a hex; use unitsAt when the hex may hold a stack. */
 export function unitAt(state: PlayState, col: number, row: number): PlayUnit | undefined {
-  return state.units.find((unit) => unit.col === col && unit.row === row);
+  return unitsAt(state, col, row)[0];
 }
 
 export function unitById(state: PlayState, id: string): PlayUnit | undefined {
@@ -171,7 +177,7 @@ export function createInitialState(): PlayState {
       a: { minerals: 0, gas: 0 },
       b: { minerals: 0, gas: 0 },
     },
-    log: ["Player A starts on the top edge. Select a unit, then click a neighbouring hex."],
+    log: ["Click one of your hexes to inspect the pieces there."],
     winner: null,
   };
 }
@@ -195,7 +201,8 @@ export function canUnitMoveTo(
   if (unit.moved || unit.typeId === "base") return false;
   if (!inBounds(col, row)) return false;
   if (!isAdjacent(unit, { col, row })) return false;
-  return unitAt(state, col, row) === undefined;
+  // Allied pieces can share a hex; enemy-held hexes stay closed.
+  return unitsAt(state, col, row).every((occupant) => occupant.owner === unit.owner);
 }
 
 export function canMoveTo(state: PlayState, unit: PlayUnit, col: number, row: number): boolean {
@@ -284,7 +291,6 @@ function acceptedMoves(
 ): AcceptedMove[] {
   const accepted: AcceptedMove[] = [];
   const claimedUnits = new Set<string>();
-  const claimedTargets = new Set<string>();
 
   for (const move of moves) {
     const unit = unitById(state, move.unitId);
@@ -292,11 +298,7 @@ function acceptedMoves(
     if (claimedUnits.has(unit.id)) continue;
     if (!canUnitMoveTo(state, unit, move.col, move.row)) continue;
 
-    const target = hexId(move.col, move.row);
-    if (claimedTargets.has(target)) continue;
-
     claimedUnits.add(unit.id);
-    claimedTargets.add(target);
     accepted.push({ player, unit, move });
   }
 
@@ -308,8 +310,9 @@ function acceptedMoves(
  *
  * Every unit steps once, at the same time. Destinations are checked against the
  * positions at the start of the round, so units cannot chain through each
- * other. If both players pick the same empty hex, both of those moves are
- * cancelled. Workers then harvest for their own side and the next round begins.
+ * other. Any number of allied pieces may share a hex. If both players pick the
+ * same empty hex, every move into it is cancelled. Workers then harvest for
+ * their own side and the next round begins.
  */
 export function resolveRound(
   state: PlayState,
@@ -330,9 +333,10 @@ export function resolveRound(
     else byTarget.set(target, [entry]);
   }
 
-  const contested = accepted.filter(
-    (entry) => (byTarget.get(hexId(entry.move.col, entry.move.row))?.length ?? 0) > 1,
-  );
+  const contested = accepted.filter((entry) => {
+    const group = byTarget.get(hexId(entry.move.col, entry.move.row)) ?? [];
+    return group.some((other) => other.player !== entry.player);
+  });
   const moving = accepted.filter((entry) => !contested.includes(entry));
   const movingByUnit = new Map(moving.map((entry) => [entry.unit.id, entry]));
 
@@ -368,7 +372,7 @@ export function resolveRound(
     const targets = Array.from(
       new Set(contested.map((entry) => tileLabel(entry.move.col, entry.move.row))),
     );
-    log.push(`Contested ${targets.join(", ")}: both moves cancelled.`);
+    log.push(`Contested ${targets.join(", ")}: both sides' moves cancelled.`);
   }
 
   for (const player of ["a", "b"] as Player[]) {

@@ -78,16 +78,19 @@ regardless of band; long range does not shoot two hexes away.
 
 **Play mode is a starter map, not the full game.** The Play tab uses a fixed 3×5
 odd-r hex grid with Player A on the top edge and Player B on the bottom edge, and
-one mineral node plus one gas node on each side edge. Rounds are simultaneous:
-each player queues at most one adjacent, unoccupied destination per mobile unit
-(Bases never move) and clicks Submit. Once both plans are in, they resolve
-together against the start-of-round positions. If both players target the same
-empty hex, both of those moves are cancelled. Each Worker on a resource node then
-harvests one of that resource for its own side, and the round advances. Combat,
-building and spending are intentionally absent; resources are just a running
-score. The board is shared by two paired players: the host is authoritative,
-collects both submissions and resolves the round, while the guest sends its plan.
-Either side can forfeit. Matching codes are 5 characters.
+one mineral node plus one gas node on each side edge. Any number of pieces from
+one side may stack on a hex, but enemy-held hexes cannot be entered. An occupied
+hex shows only a dot in its owner's colour; clicking one of your own hexes lists
+every piece in the left-hand hex panel, while clicking an enemy hex reveals only
+"Occupied by enemy". Rounds are simultaneous: each player queues at most one
+adjacent destination per mobile unit (Bases never move) and clicks Submit. Once
+both plans are in, they resolve together against the start-of-round positions. If
+both players target the same empty hex, both sides' moves into it are cancelled.
+Each Worker on a resource node then harvests one of that resource for its own side,
+and the round advances. Combat, building and spending are intentionally absent;
+resources are just a running score. The board is shared by two paired players: the
+host is authoritative, collects both submissions and resolves the round, while the
+guest sends its plan. Either side can forfeit. Matching codes are 5 characters.
 
 **Real-time transport is peer-to-peer.** Cross-device games use WebRTC with the
 public PeerJS broker for the initial handshake; no game state touches a server.
@@ -102,7 +105,9 @@ play would still need a server.
 
 **Maneuver tokens.** How many a player gets per turn is not stated.
 
-**Stacking.** No limit is given for armies per hex, or for combining two armies.
+**Stacking.** The full game gives no limit for armies per hex or for combining two
+armies. The Play starter map now lets any number of allied pieces share a hex as a
+deliberate simplification; how stacking should work on the real map is still open.
 
 **Randomness.** Conflicts and battles resolve in random order. A physical game uses
 a die; an app needs a seed both players can verify. Not modelled, because the Battle

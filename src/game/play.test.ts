@@ -4,6 +4,7 @@ import {
   MAP_ROWS,
   MAP_TILES,
   canMoveTo,
+  canUnitMoveTo,
   createInitialState,
   endTurn,
   harvestFor,
@@ -14,6 +15,7 @@ import {
   tileAt,
   unitAt,
   unitById,
+  unitsAt,
 } from "./play";
 
 describe("starter map", () => {
@@ -79,17 +81,39 @@ describe("movement", () => {
     expect(moveUnit(moved, worker.id, 0, 2)).toBe(moved);
   });
 
-  it("cannot move bases, enemy units, or onto an occupied hex", () => {
+  it("cannot move bases or enemy units, and keeps enemy-held hexes closed", () => {
     const state = createInitialState();
     const base = unitById(state, "a-base");
-    const soldier = unitById(state, "a-soldier");
     const enemy = unitById(state, "b-worker");
-    if (!base || !soldier || !enemy) throw new Error("missing units");
+    if (!base || !enemy) throw new Error("missing units");
 
     expect(canMoveTo(state, base, 1, 1)).toBe(false);
     expect(canMoveTo(state, enemy, 2, 3)).toBe(false);
-    // A's soldier at C1 cannot step onto A's own base at B1.
-    expect(canMoveTo(state, soldier, 1, 0)).toBe(false);
+
+    // Put Player B's Worker next to Player A's Worker and try to step in.
+    const blockaded = {
+      ...state,
+      units: state.units.map((unit) =>
+        unit.id === "b-worker" ? { ...unit, col: 0, row: 1 } : unit,
+      ),
+    };
+    const worker = unitById(blockaded, "a-worker");
+    if (!worker) throw new Error("missing worker");
+    expect(canUnitMoveTo(blockaded, worker, 0, 1)).toBe(false);
+  });
+
+  it("lets allied pieces stack on the same hex", () => {
+    const state = createInitialState();
+    const soldier = unitById(state, "a-soldier");
+    if (!soldier) throw new Error("missing soldier");
+
+    // A's soldier at C1 can join A's base at B1.
+    expect(canMoveTo(state, soldier, 1, 0)).toBe(true);
+    const moved = moveUnit(state, soldier.id, 1, 0);
+    expect(unitsAt(moved, 1, 0).map((unit) => unit.id).sort()).toEqual([
+      "a-base",
+      "a-soldier",
+    ]);
   });
 
   it("cannot move to a non-adjacent hex", () => {
@@ -170,6 +194,44 @@ describe("simultaneous rounds", () => {
     });
     expect(next.turn).toBe(2);
     expect(unitById(next, "a-worker")?.moved).toBe(false);
+  });
+
+  it("lets several allied units enter the same hex in one round", () => {
+    const state = createInitialState();
+    const units = state.units.map((unit) => {
+      if (unit.id === "a-worker") return { ...unit, col: 0, row: 1 };
+      if (unit.id === "a-soldier") return { ...unit, col: 2, row: 1 };
+      return unit;
+    });
+
+    const next = resolveRound(
+      { ...state, units },
+      {
+        a: [
+          { unitId: "a-worker", col: 1, row: 1 },
+          { unitId: "a-soldier", col: 1, row: 1 },
+        ],
+        b: [],
+      },
+    );
+
+    expect(unitsAt(next, 1, 1).map((unit) => unit.id).sort()).toEqual([
+      "a-soldier",
+      "a-worker",
+    ]);
+  });
+
+  it("harvests once per Worker stacked on a resource node", () => {
+    const state = createInitialState();
+    const units = [
+      ...state.units.map((unit) =>
+        unit.id === "a-worker" ? { ...unit, col: 0, row: 1 } : unit,
+      ),
+      { id: "a-worker-2", owner: "a" as const, typeId: "worker" as const, col: 0, row: 1, moved: false },
+    ];
+    const stacked = { ...state, units };
+
+    expect(harvestFor(stacked, "a")).toEqual({ minerals: 2, gas: 0 });
   });
 
   it("ignores forged, impossible and duplicate moves", () => {
